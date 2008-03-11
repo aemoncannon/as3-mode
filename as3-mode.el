@@ -178,9 +178,9 @@
     ("splice-exp-into-string" . "as3-splice-exp-into-string")
     ("accessors" . "as3-getter-setter")
     ("flip-to-y" . "as3-copy-and-flip-line")
-    ("create-getter" . "as3-create-getter")
-    ("create-setter" . "as3-create-setter")
-    ("create-getter-and-setter" . "as3-create-getter-and-setter")
+    ("create-getter" . "as3-create-getter-from-var-def-at-point")
+    ("create-setter" . "as3-create-setter-from-var-def-at-point")
+    ("create-getter-and-setter" . "as3-create-getter-and-setter-from-var-def-at-point")
     ("create-subclass" . "as3-create-subclass")
     ("create-from-template" . "as3-create-from-template")
     ("create-private-var" . "as3-create-private-var")
@@ -407,8 +407,20 @@
     (format "%s %s%s:%s" (or modifiers "") name (or param-types "()") type)
     ))
 
+(defun as3-point-after-last-var-def (&optional tree)
+  (flyparse-tree-end-offset 
+   (flyparse-query-last as3-flyparse-path-to-variable-def 
+			(or tree flyparse-newest-parse-tree))))
 
+(defun as3-point-after-last-const-def (&optional tree)
+  (flyparse-tree-end-offset 
+   (flyparse-query-last (append as3-flyparse-path-to-class-member '(("VARIABLE_DEF" (has ("VARIABLE_DEF" "const")))))
+			(or tree flyparse-newest-parse-tree))))
 
+(defun as3-point-at-beginning-of-type-block (&optional tree)
+  (flyparse-tree-beg-offset 
+   (flyparse-query-first as3-flyparse-path-to-class-block
+			 (or tree flyparse-newest-parse-tree))))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -626,27 +638,21 @@
 	  (message "Saved method contents to kill-ring."))
       (message "Not inside a method."))))
 
+(defun as3-create-private-var (name type pos)
+  (goto-char pos)
+  (end-of-line)
+  (newline)
+  (insert (format "private var _%s:%s;" name type))
+  (indent-according-to-mode))
 
-(defun as3-create-private-var (pos)
+(defun as3-create-private-var-at-point (pos)
   (interactive (list (point)))
   (let* ((name (read-string "Please enter the variable name: "))
 	 (type (read-string "Please enter the variable type: " "Number")))
-    (insert (format "private var _%s:%s;" name type))))
+    (as3-create-private-var name type pos)))
 
 
-(defun as3-create-getter (pos)
-  "Create a getter for the var definition under point."
-  (interactive (list (point)))
-  (let ((var-def (flyparse-directed-search '("VARIABLE_DEF"))))
-    (if var-def
-	(progn
-	  (end-of-line)
-	  (newline)
-	  (insert (as3-getter-for var-def))
-	  (indent-according-to-mode))
-      (message "Not inside a variable definition."))))
-
-(defun as3-create-getter-and-setter (pos)
+(defun as3-create-getter-and-setter-from-var-def-at-point (pos)
   "Create a getter and a setter for the var definition under point."
   (interactive (list (point)))
   (let ((var-def (flyparse-query-first 
@@ -663,7 +669,19 @@
 	  (indent-according-to-mode))
       (message "Not inside a variable definition."))))
 
-(defun as3-create-setter (pos)
+(defun as3-create-getter-from-var-def-at-point (pos)
+  "Create a getter for the var definition under point."
+  (interactive (list (point)))
+  (let ((var-def (flyparse-directed-search '("VARIABLE_DEF"))))
+    (if var-def
+	(progn
+	  (end-of-line)
+	  (newline)
+	  (insert (as3-getter-for var-def))
+	  (indent-according-to-mode))
+      (message "Not inside a variable definition."))))
+
+(defun as3-create-setter-from-var-def-at-point (pos)
   "Create a setter for the var definition under point."
   (interactive (list (point)))
   (let ((var-def (flyparse-query-first 
@@ -1051,12 +1069,19 @@
 								 "VAR_DECLARATION" "VAR_INITIALIZER") 
 							       (flyparse-directed-search 
 								'("VARIABLE_DEF" (has ("VARIABLE_DEF" "const"))) 45 tree))))))
+
+    ;; Check position of last var-def
+    (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dudette{public var monkey:Number = 20;}}")))
+      (assert (= 58 (as3-point-after-last-var-def tree))))
+
+    ;; Check position of last constant
+    (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dudette{public static const monkey:Number = 20;}}")))
+      (assert (= 67 (as3-point-after-last-const-def tree))))
     
     ;; test non-qualified function positioning...
     (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function Dude(){horse();}}}")))
       (assert (equal "horse"
 		     (flyparse-tree-type (flyparse-directed-search '("horse") 52 tree)))))
-    
     
     ;; query for super
     (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function Dude(){super();}}}")))
@@ -1065,6 +1090,7 @@
     ;; search for constant variable reference
     (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function Dude(){return MOOSE;}}}")))
       (assert (equal "MOOSE" (flyparse-tree-as-text (flyparse-directed-search '("NAME") 58 tree)))))
+
     
     ;; literals passed to 'new' expression
     (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function Dude(){var aemon = new Crap({name: \"lkj\"});}}}")))
