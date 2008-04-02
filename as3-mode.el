@@ -32,6 +32,7 @@
 (require 'font-lock)
 (require 'cc-mode)
 (require 'abbrev-extensions)
+(require 'yasnippet)
 (eval-when-compile (require 'regexp-opt))
 
 (defvar as3-build-and-run-command nil)
@@ -215,7 +216,9 @@
   (setq flyparse-parse-cmd as3-flyparse-parse-cmd)
   (flyparse-mode-on)
   (project-helper-load)
-  (flymake-mode-on))
+  (flymake-mode-on)
+  (run-hooks 'as3-mode-hook)
+  )
 
 
 
@@ -253,6 +256,12 @@
 
 (defun as3-count-scope-depth (rstart rend)
   "Return difference between open and close scope delimeters."
+  ;;Attempting Steve Yegge's solution..
+  ;;  (save-excursion
+  ;;    (let ((result (parse-partial-sexp rstart rend)))
+  ;;      (if (or (nth 3 result) (nth 4 result) (nth 7 result))
+  ;;	  0
+  ;;	(nth 0 result)))))
   (save-excursion
     (goto-char rstart)
     (let ((open-count 0)
@@ -264,10 +273,8 @@
 	(if (= opoint (point))
 	    (forward-char 1)
 	  (cond
-
 	   ;; Don't count if in string or comment.
 	   ((as3-face-at-point (- (point) 1))) 
-
 	   ((looking-back "\\s)")
 	    (incf close-count))
 	   ((looking-back "\\s(")
@@ -1003,7 +1010,15 @@
       (message "Not in a class."))))
 
 
+;;;;;;;;;;;;;;
+;; snippets ;;
+;;;;;;;;;;;;;;
 
+(yas/define 'as3-mode "if" "if (${condition})
+{
+    $0
+}" "if (...) { ... }"
+)
 
 
 ;;;;;;;;;;;;;;;;;;;;;;
@@ -1070,11 +1085,11 @@
 							       (flyparse-directed-search 
 								'("VARIABLE_DEF" (has ("VARIABLE_DEF" "const"))) 45 tree))))))
 
-    ;; Check position of last var-def
+    ;; Check ending position of last var-def
     (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dudette{public var monkey:Number = 20;}}")))
       (assert (= 58 (as3-point-after-last-var-def tree))))
 
-    ;; Check position of last constant
+    ;; Check ending position of last constant
     (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dudette{public static const monkey:Number = 20;}}")))
       (assert (= 67 (as3-point-after-last-const-def tree))))
     
