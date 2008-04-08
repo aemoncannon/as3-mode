@@ -969,7 +969,20 @@
     (insert "\\\'"))
    (t
     (insert "'"))))
-;;(define-key as3-mode-map (kbd "'") 'as3-contextual-single-quote)
+
+
+(defun as3-override-tab (pos)
+  "Search backward to find the method we are currently typing, 
+   then display contextual help."
+  (interactive (list (point)))
+  (let ((start-point (point))
+	(result (re-search-backward "\\w+(" (point-at-bol) t)))
+    (if result
+	(progn
+	  (as3-show-signature-for-word (point))
+	  (goto-char start-point))
+      (indent-for-tab-command))))
+(define-key as3-mode-map (kbd "TAB") 'as3-override-tab)
 
 (defun as3-asdoc-method (pos)
   (interactive (list (point)))
