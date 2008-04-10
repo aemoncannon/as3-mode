@@ -411,7 +411,7 @@
 	 (param-types (as3-method-parameter-types tree))
 	 (modifiers (as3-method-modifiers tree))
 	 )
-    (format "%s %s%s:%s" (or modifiers "") name (or param-types "()") type)
+    (format "%s %s(%s):%s" (mapconcat 'identity modifiers " ") name (mapconcat 'identity param-types ", ") type)
     ))
 
 (defun as3-point-after-last-var-def (&optional tree)
@@ -841,14 +841,16 @@
 		     (offset (flyparse-tree-beg-offset def-tree)))
 		(if (equal path buffer-file-name)
 		    (goto-char offset)
-		(progn
-		  (find-file-other-window path)
-		  (goto-char offset))))
+		  (progn
+		    (find-file-other-window path)
+		    (goto-char offset))))
 	    (message "Definition for %s not found." obj-name)))
       (message "Not positioned in variable or method name."))))
+(define-key as3-mode-map (kbd "C-c j") 'as3-goto-def)
+
 
 (defun as3-show-signature-for-word (pos)
-  "Show the signature for the method name under cursor."
+  "Show the signature for the method name at pointunder cursor."
   (interactive (list (point)))
   (let ((meth-name (word-at-point))
 	(potential-defs '()))
@@ -857,15 +859,29 @@
        (let ((class-name (as3-first-class-name tree))
 	     (found-def (as3-first-method-def tree meth-name)))
 	 (if found-def 
-	     (push (list class-name found-def) potential-defs)))))
+	     (push (list class-name found-def path) potential-defs)))))
     (if (not (null potential-defs))
-	(message (mapconcat 
-		  (lambda (ea) 
-		    (format "%s#%s" 
-			    (first ea) 
-			    (as3-pretty-method-desc (second ea))))
-		  potential-defs 
-		  "\n"))
+	(progn
+	  (switch-to-buffer-other-window (format "*AS3 Method Help*" meth-name))
+	  (insert "\n")
+	  (mapc
+	   (lambda (ea)
+	     (insert (format "%s#       %s" 
+			     (first ea)
+			     (as3-pretty-method-desc (second ea))))
+	     (make-button (point-at-bol) (point-at-eol)
+			  'face font-lock-constant-face
+			  'action `(lambda (x) 
+				     (find-file-other-window ,(third ea))
+				     (goto-char ,(flyparse-tree-beg-offset (second ea)))
+				     ))
+	     (insert "\n"))
+	   potential-defs)
+	  (setq buffer-read-only t)
+	  (use-local-map (make-sparse-keymap))
+	  (define-key (current-local-map) (kbd "q") 'kill-buffer-and-window)
+	  (goto-char (point-min))
+	  )
       (message "No definition for %s found." meth-name))))
 
 
@@ -971,7 +987,7 @@
     (insert "'"))))
 
 
-(defun as3-override-tab (pos)
+(defun as3-on-tab-show-method-help (pos)
   "Search backward to find the method we are currently typing, 
    then display contextual help."
   (interactive (list (point)))
@@ -982,7 +998,7 @@
 	  (as3-show-signature-for-word (point))
 	  (goto-char start-point))
       (indent-for-tab-command))))
-(define-key as3-mode-map (kbd "TAB") 'as3-override-tab)
+(define-key as3-mode-map (kbd "TAB") 'as3-on-tab-show-method-help)
 
 (defun as3-asdoc-method (pos)
   (interactive (list (point)))
