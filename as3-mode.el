@@ -32,8 +32,10 @@
 (require 'font-lock)
 (require 'cc-mode)
 (require 'abbrev-extensions)
-(require 'yasnippet)
 (eval-when-compile (require 'regexp-opt))
+(add-to-list 'load-path "~/etc/emacs/site-lisp/yasnippet/")
+(require 'yasnippet)
+
 
 (defvar as3-build-and-run-command nil)
 (make-variable-buffer-local 'as3-build-and-run-command)
@@ -196,6 +198,7 @@
     ("asdoc-class" . "as3-asdoc-class")
     ("show-class-member-dir" . "as3-show-members-of")
     ("kill-all-members-except-constructor" . "as3-kill-all-but-constructor")
+    ("add-event-listener" . "as3-insert-event-listener")
     ))
 
 (defun as3-quick-menu ()
@@ -217,6 +220,7 @@
   (flyparse-mode-on)
   (project-helper-load)
   (flymake-mode-on)
+  (yas/initialize)
   (run-hooks 'as3-mode-hook)
   )
 
@@ -292,11 +296,11 @@
   (if as3-flymake-build-command
       (progn
 	(remove-hook 'after-save-hook 'flymake-after-save-hook t)
-	(save-buffer)
+	(basic-save-buffer)
 	(add-hook 'after-save-hook 'flymake-after-save-hook nil t)
 	as3-flymake-build-command)))
 
-(defun flymake-as3-cleanup () (message "Flymake finished checking AS3."))
+(defun flymake-as3-cleanup () ())
 (defun flymake-as3-get-real-file-name (tmp-file) tmp-file)
 
 (setq flymake-allowed-file-name-masks
@@ -508,14 +512,6 @@
 		(find-file-other-window path))
 	    (message "Sorry, did not find any subclasses for %s." class-name)))
       (message "This buffer does not contain an AS3 class."))))
-
-
-(defun as3-show-all-method-names ()
-  "Just a test of flyparse's capabilities"
-  (interactive)
-  (let* ((method-name-trees (flyparse-query-all as3-flyparse-path-to-method-name-text))
-	 (method-names (mapcar (lambda (tree) (flyparse-tree-type tree)) method-name-trees)))
-    (message "%s" method-names)))
 
 
 (defun as3-show-members-of (pos)
@@ -781,6 +777,32 @@
       (message "This is not a class.."))
     ))
 
+(defun as3-insert-event-listener (pos)
+  "Insert an 'addEventListener' statement - potentially creating the corresponding listener."
+  (interactive (list (point)))
+  (let* ((event-type-options `(("MouseEvent.MOUSE_DOWN" . ("MouseEvent" "MOUSE_DOWN" "onMouseDown"))
+			       ("MouseEvent.MOUSE_UP" . ("MouseEvent" "MOUSE_UP" "onMouseUp"))
+			       ("MouseEvent.ROLL_OUT" . ("MouseEvent" "MOUSE_OUT" "onRollOut"))
+			       ("MouseEvent.ROLL_OVER" . ("MouseEvent" "MOUSE_OVER" "onRollOver"))
+			       ("KeyboardEvent.KEY_UP" . ("KeyboardEvent" "KEY_UP" "onKeyUp"))
+			       ("KeyboardEvent.KEY_DOWN" . ("KeyboardEvent" "KEY_DOWN" "onKeyDown"))
+			       ("TimerEvent.TIMER" . ("TimerEvent" "TIMER" "onTimer"))
+			       ))
+	 (type-key (ido-completing-read "Event type: " event-type-options nil t nil))
+	 (type-desc (cdr (assoc type-key event-type-options)))
+	 (event-type (concat (first type-desc) "." (second type-desc)))
+	 (listener-options `(("function(..){..}" . ,(format "function(e:%s){}" (first type-desc)))
+			     (,(format "(default)%s" (third type-desc)) . ,(third type-desc))))
+	 (listener-key  (ido-completing-read "Event listener: " listener-options nil t nil))
+	 (listener-desc (cdr (assoc listener-key listener-options))))
+    (save-excursion
+      (insert (format "addEventListener(%s, %s);"
+		      event-type
+		      listener-desc))
+      (indent-according-to-mode)
+      )))
+
+
 
 (defun as3-edit-var-def (pos)
   "Edit the initial value of the var referenced under cursor, within this class. "
@@ -862,26 +884,28 @@
 	     (push (list class-name found-def path) potential-defs)))))
     (if (not (null potential-defs))
 	(progn
-	  (switch-to-buffer-other-window (format "*AS3 Method Help*" meth-name))
-	  (insert "\n")
-	  (mapc
-	   (lambda (ea)
-	     (insert (format "%s#       %s" 
-			     (first ea)
-			     (as3-pretty-method-desc (second ea))))
-	     (make-button (point-at-bol) (point-at-eol)
-			  'face font-lock-constant-face
-			  'action `(lambda (x) 
-				     (find-file-other-window ,(third ea))
-				     (goto-char ,(flyparse-tree-beg-offset (second ea)))
-				     ))
-	     (insert "\n"))
-	   potential-defs)
-	  (setq buffer-read-only t)
-	  (use-local-map (make-sparse-keymap))
-	  (define-key (current-local-map) (kbd "q") 'kill-buffer-and-window)
-	  (goto-char (point-min))
-	  )
+	  (let ((buffer-name (format "*AS3 Method Help*" meth-name)))
+	    (kill-buffer buffer-name)
+	    (switch-to-buffer-other-window buffer-name)
+	    (insert "\n")
+	    (mapc
+	     (lambda (ea)
+	       (insert (format "%s#       %s" 
+			       (first ea)
+			       (as3-pretty-method-desc (second ea))))
+	       (make-button (point-at-bol) (point-at-eol)
+			    'face font-lock-constant-face
+			    'action `(lambda (x)
+				       (find-file-other-window ,(third ea))
+				       (goto-char ,(flyparse-tree-beg-offset (second ea)))
+				       ))
+	       (insert "\n"))
+	     potential-defs)
+	    (setq buffer-read-only t)
+	    (use-local-map (make-sparse-keymap))
+	    (define-key (current-local-map) (kbd "q") 'kill-buffer-and-window)
+	    (goto-char (point-min))
+	    ))
       (message "No definition for %s found." meth-name))))
 
 
@@ -1049,10 +1073,9 @@
 ;; snippets ;;
 ;;;;;;;;;;;;;;
 
-(yas/define 'as3-mode "if" "if (${condition})
-{
+(yas/define 'as3-mode "fu" "function(${arg}){
     $0
-}" "if (...) { ... }"
+}" "function(...){ ... }"
 )
 
 
