@@ -169,6 +169,42 @@
    )
   "Subdued level highlighting for As3 mode.")
 
+(defvar as3-event-options
+  `(("MouseEvent.MOUSE_DOWN" . ("MouseEvent" "MOUSE_DOWN" "onMouseDown"))
+    ("MouseEvent.MOUSE_UP" . ("MouseEvent" "MOUSE_UP" "onMouseUp"))
+    ("MouseEvent.ROLL_OUT" . ("MouseEvent" "MOUSE_OUT" "onRollOut"))
+    ("MouseEvent.ROLL_OVER" . ("MouseEvent" "MOUSE_OVER" "onRollOver"))
+    ("KeyboardEvent.KEY_UP" . ("KeyboardEvent" "KEY_UP" "onKeyUp"))
+    ("KeyboardEvent.KEY_DOWN" . ("KeyboardEvent" "KEY_DOWN" "onKeyDown"))
+    ("TimerEvent.TIMER" . ("TimerEvent" "TIMER" "onTimer"))
+    ("Event.ACTIVATE" . ("Event" "ACTIVATE" "onActivate"))
+    ("Event.ADDED" . ("Event" "ADDED" "onAdded"))
+    ("Event.ADDED_TO_STAGE" . ("Event" "ADDED_TO_STAGE" "onAddedToStage"))
+    ("Event.CANCEL" . ("Event" "CANCEL" "onCancel"))
+    ("Event.CHANGE" . ("Event" "CHANGE" "onChange"))
+    ("Event.CLOSE" . ("Event" "CLOSE" "onClose"))
+    ("Event.COMPLETE" . ("Event" "COMPLETE" "onComplete"))
+    ("Event.CONNECT" . ("Event" "CONNECT" "onConnect"))
+    ("Event.DEACTIVATE" . ("Event" "DEACTIVATE" "onDeactivate"))
+    ("Event.ENTER_FRAME" . ("Event" "ENTER_FRAME" "onEnterFrame"))
+    ("Event.FULLSCREEN" . ("Event" "FULLSCREEN" "onFullScreen"))
+    ("Event.ID3" . ("Event" "ID3" "onId3"))
+    ("Event.INIT" . ("Event" "INIT" "onInit"))
+    ("Event.MOUSE_LEAVE" . ("Event" "MOUSE_LEAVE" "onMouseLeave"))
+    ("Event.OPEN" . ("Event" "OPEN" "onOpen"))
+    ("Event.REMOVED" . ("Event" "REMOVED" "onRemoved"))
+    ("Event.REMOVED_FROM_STAGE" . ("Event" "REMOVED_FROM_STAGE" "onRemovedFromStage"))
+    ("Event.RENDER" . ("Event" "RENDER" "onRender"))
+    ("Event.RESIZE" . ("Event" "RESIZE" "onResize"))
+    ("Event.SCROLL" . ("Event" "SCROLL" "onScroll"))
+    ("Event.SELECT" . ("Event" "SELECT" "onSelect"))
+    ("Event.SOUND_COMPLETE" . ("Event" "SOUND_COMPLETE" "onSoundComplete"))
+    ("Event.TAB_CHILDREN_CHANGE" . ("Event" "TAB_CHILDREN_CHANGE" "onTabChildrenChange"))
+    ("Event.TAB_ENABLED_CHANGE" . ("Event" "TAB_ENABLED_CHANGE" "onTabEnabledChange"))
+    ("Event.TAB_INDEX_CHANGE" . ("Event" "TAB_INDEX_CHANGE" "onTabIndexChange"))
+    ("Event.UNLOAD" . ("Event" "UNLOAD" "onUnload"))
+    ))
+
 
 (defvar as3-command-library 
   '(("hoist-constant" . "as3-hoist-as-constant")
@@ -780,20 +816,27 @@
 (defun as3-insert-event-listener (pos)
   "Insert an 'addEventListener' statement - potentially creating the corresponding listener."
   (interactive (list (point)))
-  (let* ((event-type-options `(("MouseEvent.MOUSE_DOWN" . ("MouseEvent" "MOUSE_DOWN" "onMouseDown"))
-			       ("MouseEvent.MOUSE_UP" . ("MouseEvent" "MOUSE_UP" "onMouseUp"))
-			       ("MouseEvent.ROLL_OUT" . ("MouseEvent" "MOUSE_OUT" "onRollOut"))
-			       ("MouseEvent.ROLL_OVER" . ("MouseEvent" "MOUSE_OVER" "onRollOver"))
-			       ("KeyboardEvent.KEY_UP" . ("KeyboardEvent" "KEY_UP" "onKeyUp"))
-			       ("KeyboardEvent.KEY_DOWN" . ("KeyboardEvent" "KEY_DOWN" "onKeyDown"))
-			       ("TimerEvent.TIMER" . ("TimerEvent" "TIMER" "onTimer"))
-			       ))
-	 (type-key (ido-completing-read "Event type: " event-type-options nil t nil))
-	 (type-desc (cdr (assoc type-key event-type-options)))
+  (let* ((type-key (ido-completing-read "Event type: " as3-event-options nil t nil))
+	 (type-desc (cdr (assoc type-key as3-event-options)))
 	 (event-type (concat (first type-desc) "." (second type-desc)))
-	 (listener-options `(("function(..){..}" . ,(format "function(e:%s){}" (first type-desc)))
-			     (,(format "(default)%s" (third type-desc)) . ,(third type-desc))))
-	 (listener-key  (ido-completing-read "Event listener: " listener-options nil t nil))
+	 (listener-trees
+	  (flyparse-query-all
+	   `("COMPILATION_UNIT" "PACKAGE_DECL" "CLASS_DEF" 
+	     "TYPE_BLOCK" "CLASS_MEMBER" 
+	     ("METHOD_DEF" (has ("METHOD_DEF" "PARAMS"  "PARAM" "TYPE_SPEC" 
+				 ("TYPE" (text-match
+					  ,(format "^Event$\\|^%s$" (first type-desc))
+					  ))))))))
+	 (listener-existing-options (mapcar (lambda (method-def) 
+					      (let ((name (as3-method-name method-def))) `(,name . ,name)))
+					    listener-trees))
+	 (listener-options (append `(("function(..){..}" . ,(format "function(e:%s){}" (first type-desc)))
+				     (,(format "(default)%s" (third type-desc)) . ,(third type-desc)))
+				   listener-existing-options
+				   ))
+	 (listener-key  (ido-completing-read 
+			 (format "Event listener for %s: " (first type-desc)) 
+			 listener-options nil t nil))
 	 (listener-desc (cdr (assoc listener-key listener-options))))
     (save-excursion
       (insert (format "addEventListener(%s, %s);"
@@ -884,13 +927,14 @@
 	     (push (list class-name found-def path) potential-defs)))))
     (if (not (null potential-defs))
 	(progn
-	  (let ((buffer-name (format "*AS3 Method Help*" meth-name)))
-	    (kill-buffer buffer-name)
+	  (let ((buffer-name "*AS3 Method Help*"))
+	    (if (get-buffer buffer-name)
+		(kill-buffer buffer-name))
 	    (switch-to-buffer-other-window buffer-name)
 	    (insert "\n")
 	    (mapc
 	     (lambda (ea)
-	       (insert (format "%s#       %s" 
+	       (insert (format "%s#       %s"
 			       (first ea)
 			       (as3-pretty-method-desc (second ea))))
 	       (make-button (point-at-bol) (point-at-eol)
