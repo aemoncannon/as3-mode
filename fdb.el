@@ -80,8 +80,6 @@ Return t if it has at least one gud overlay, nil if no overlay."
 (defun gud-fdb-marker-filter (string)
   (setq gud-marker-acc (concat gud-marker-acc string))
   (let ((output string))
-    (message string)
-    
     ;; Process Breakpoint lists:
     ;; First check to see if the full list exists
     (if (string-match (concat gud-fdb-breakpoint-full-list-regexp) gud-marker-acc)
