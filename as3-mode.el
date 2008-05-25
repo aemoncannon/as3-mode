@@ -585,33 +585,6 @@
       (message "This buffer does not contain an AS3 class."))))
 
 
-(defun as3-show-members-of (name)
-  "List the members of the class with name."
-  (let ((found nil))
-    (flyparse-for-each-cached-tree
-     (lambda (path tree)
-       (let ((class-name-tree (flyparse-query-first 
-			       as3-flyparse-path-to-class-name tree)))
-	 (if class-name-tree
-	     (let ((class-name (flyparse-tree-type class-name-tree)))
-	       (if (equal class-name name)
-		   (setf found `(,path ,tree))))))))
-    (if (not (null found))
-	(let ((path (first found))
-	      (tree (second found)))
-	  (switch-to-buffer-other-window (format "*%s members*" name))
-	  (insert "\n")
-	  (let* ((method-trees (flyparse-query-all as3-flyparse-path-to-method-def tree)))
-	    (mapc (lambda (meth-tree) 
-		    (insert (format "%s\n\n" (as3-pretty-method-desc meth-tree))))
-		  method-trees))
-	  (setq buffer-read-only t)
-	  (use-local-map (make-sparse-keymap))
-	  (define-key (current-local-map) (kbd "q") 'kill-buffer-and-window)
-	  (goto-char (point-min)))
-      (message "Sorry, did not find class for %s." name))))
-
-
 (defun as3-hoist-as-method (beg end)
   "Hoist a collection of statements into their own method."
   (interactive (list (mark) (point)))
@@ -953,6 +926,44 @@
       (message "No definition for %s found." meth-name))))
 
 
+(defun as3-show-members-of (name)
+  "List the members of the class with name."
+  (let ((found nil))
+    (flyparse-for-each-cached-tree
+     (lambda (path tree)
+       (let ((class-name-tree (flyparse-query-first 
+			       as3-flyparse-path-to-class-name tree)))
+	 (if class-name-tree
+	     (let ((class-name (flyparse-tree-type class-name-tree)))
+	       (if (equal class-name name)
+		   (setf found `(,path ,tree))))))))
+    (if (not (null found))
+	(let ((path (first found))
+	      (tree (second found))
+	      (buffer-name "*AS3 Class Help*"))
+	  (if (get-buffer buffer-name)
+	      (kill-buffer buffer-name))
+	  (switch-to-buffer-other-window buffer-name)
+	  (insert (format " Members of class '%s':\n----------------------------\n" name))
+	  (let* ((method-trees (flyparse-query-all as3-flyparse-path-to-method-def tree)))
+	    (mapc
+	     (lambda (ea)
+	       (insert (format "%s"(as3-pretty-method-desc ea)))
+	       (make-button (point-at-bol) (point-at-eol)
+			    'face font-lock-constant-face
+			    'action `(lambda (x)
+				       (find-file-other-window ,path)
+				       (goto-char ,(flyparse-tree-beg-offset ea))
+				       ))
+	       (insert "\n"))
+	     method-trees))
+	  (setq buffer-read-only t)
+	  (use-local-map (make-sparse-keymap))
+	  (define-key (current-local-map) (kbd "q") 'kill-buffer-and-window)
+	  (goto-char (point-min)))
+      (message "Sorry, did not find class for %s." name))))
+
+
 (defun as3-hoist-as-constant (pos)
   "Create a new const static class-member with value equal to the constant
    under the cursor. Replace current literal value with reference to newly created
@@ -1011,6 +1022,7 @@
 (defun as3-show-help-at-point (pos)
   "Search backward to display contextual help."
   (interactive (list (point)))
+  (save-excursion
   (let ((start-point (point)))
     (cond
      ((re-search-backward "\\w+(" (point-at-bol) t)
@@ -1019,7 +1031,7 @@
      ((re-search-backward "\\w\." (point-at-bol) t)
       (as3-show-members-of (as3-var-type-at-point (word-at-point) (point))))
      )
-    (goto-char start-point)))
+    )))
 (define-key as3-mode-map (kbd "C-c h") 'as3-show-help-at-point)
 
 
