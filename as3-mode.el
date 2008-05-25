@@ -381,7 +381,7 @@
     as3-flyparse-path-to-class-member 
     `(("METHOD_DEF" (has ("METHOD_DEF" "METHOD_NAME" "NAME" ,name))))) class-tree))
 
-(defun as3-method-info-for-name (name &optional type-name)
+(defun as3-method-descriptions-for-name (name &optional type-name)
   "Get all method definitions with name, for type(if provided)"
   (let ((defs '()))
     (flyparse-for-each-cached-tree 
@@ -932,9 +932,9 @@
 	  ))))
 
 
-(defun as3-show-quick-method-help (method-info)
+(defun as3-show-quick-method-help (method-description)
   "Show the signature for given method in the mini-buffer"
-  (message (format "%s" (as3-pretty-method-desc (second method-info)))))
+  (message (format "%s" (as3-pretty-method-desc (second method-description)))))
 
 
 (defun as3-show-members-of (name)
@@ -1048,15 +1048,23 @@
 
        ;; Method invocation, pointer over the method name, target is 'this' (because there is leading whitespace)
        ((flyparse-re-search-containing-point "\\s \\([a-z_][A-Za-z]+\\)(" (point-at-bol) (point-at-eol) 1 (point))
-	(as3-show-method-signatures (as3-method-info-for-name (match-string 1) (as3-var-type-at-point "this" (point)))))
+	(as3-show-method-signatures (as3-method-descriptions-for-name (match-string 1) (as3-var-type-at-point "this" (point)))))
 
        ;; Method invocation, pointer over the method name, target unknown
        ((flyparse-re-search-containing-point "\\W\\([a-z_][A-Za-z]+\\)(" (point-at-bol) (point-at-eol) 1 (point))
-	(as3-show-method-signatures (as3-method-info-for-name (match-string 1))))
+	(as3-show-method-signatures (as3-method-descriptions-for-name (match-string 1))))
 
        ;; Method invocation, pointer after the open parenthesis, target unknown
-       ((flyparse-re-search-containing-point "\\W\\([a-z_][A-Za-z]+\\)(\\()?\\)" (point-at-bol) (point-at-eol) 2 (point))
-	(as3-show-quick-method-help (first (as3-method-info-for-name (match-string 1)))))
+       ((flyparse-re-search-containing-point "\\W\\([a-z_][A-Za-z]+\\)(\\()?\\)" (point-at-bol) (point) 2 (point))
+	(let ((method-descriptions (as3-method-descriptions-for-name (match-string 1))))
+	  (if method-descriptions
+	      (as3-show-quick-method-help (first (as3-method-descriptions-for-name (match-string 1)))))))
+
+       ;; Method invocation, pointer after the open parenthesis and some other crud, now positioned after a comma, target unknown
+       ((flyparse-re-search-containing-point "\\W\\([a-z_][A-Za-z]+\\)(.*\,[ ]*\\()?\\)" (point-at-bol) (point) 2 (point))
+	(let ((method-descriptions (as3-method-descriptions-for-name (match-string 1))))
+	  (if method-descriptions
+	      (as3-show-quick-method-help (first (as3-method-descriptions-for-name (match-string 1)))))))
 
        )
       )))
