@@ -1020,18 +1020,23 @@
 
 
 (defun as3-show-help-at-point (pos)
-  "Search backward to display contextual help."
+  "Display contextual help for thing at point."
   (interactive (list (point)))
   (save-excursion
-  (let ((start-point (point)))
-    (cond
-     ((re-search-backward "\\w+(" (point-at-bol) t)
-      (as3-show-method-signatures (word-at-point)))
+    (let ((start-point (point))
+	  (case-fold-search nil)) ;; Enable case sensitive searching.
+      (cond
+       ((flyparse-re-search-containing-point "\\W\\([A-Z][A-Za-z]+\\)" (point-at-bol) (point-at-eol) 1 (point))
+	(as3-show-members-of (match-string 1)))
 
-     ((re-search-backward "\\w\." (point-at-bol) t)
-      (as3-show-members-of (as3-var-type-at-point (word-at-point) (point))))
-     )
-    )))
+       ((flyparse-re-search-containing-point "\\W\\([a-z_][A-Za-z_]+\\)[^_A-Za-z(]" (point-at-bol) (point-at-eol) 1 (point))
+	(as3-show-members-of (as3-var-type-at-point (match-string 1) (point))))
+
+       ((flyparse-re-search-containing-point "\\W\\([a-z_][A-Za-z]+\\)(" (point-at-bol) (point-at-eol) 1 (point))
+	(as3-show-method-signatures (match-string 1)))
+
+       )
+      )))
 (define-key as3-mode-map (kbd "C-c h") 'as3-show-help-at-point)
 
 
