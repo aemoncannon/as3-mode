@@ -444,14 +444,30 @@
   (mapcar (lambda (ea) (flyparse-tree-as-text ea))
 	  (flyparse-query-all '("METHOD_DEF" "PARAMS" "PARAM" "TYPE_SPEC" "TYPE") tree)))
 
+(defun as3-method-parameter-names (tree)
+  (mapcar (lambda (ea) (flyparse-tree-as-text ea))
+	  (flyparse-query-all '("METHOD_DEF" "PARAMS" "PARAM" "NAME") tree)))
+
+(defun as3-method-parameter-name-type-pairs (tree)
+  (mapcar (lambda (ea) (list
+			(flyparse-tree-as-text (flyparse-query-first '("PARAM" "NAME") ea))
+			(flyparse-tree-as-text (flyparse-query-first '("PARAM" "TYPE_SPEC" "TYPE") ea))
+			))
+	  (flyparse-query-all '("METHOD_DEF" "PARAMS" "PARAM") tree)))
+
 (defun as3-pretty-method-desc (tree)
   "Return the a pretty stringified description of tree (a method tree)"
   (let* ((name (as3-method-name tree))
 	 (type (as3-method-return-type tree))
-	 (param-types (as3-method-parameter-types tree))
+	 (param-name-types (as3-method-parameter-name-type-pairs tree))
 	 (modifiers (as3-method-modifiers tree))
 	 )
-    (format "%s %s(%s):%s" (mapconcat 'identity modifiers " ") name (mapconcat 'identity param-types ", ") type)
+    (format "%s %s(%s):%s" 
+	    (mapconcat 'identity modifiers " ") 
+	    name 
+	    (mapconcat (lambda (ea) (format "%s:%s" (first ea) (second ea))) param-name-types ", ") 
+	    type
+	    )
     ))
 
 (defun as3-point-after-last-var-def (&optional tree)
@@ -1255,6 +1271,8 @@
       (assert (equal "Butt" (as3-method-return-type meth-tree)))
       (assert (equal '("public") (as3-method-modifiers meth-tree)))
       (assert (equal '("Dude" "Cat") (as3-method-parameter-types meth-tree)))
+      (assert (equal '("dude" "cat") (as3-method-parameter-names meth-tree)))
+      (assert (equal '(("dude" "Dude") ("cat" "Cat")) (as3-method-parameter-name-type-pairs meth-tree)))
       )
 
     ;; User method-return-type helper on void method
