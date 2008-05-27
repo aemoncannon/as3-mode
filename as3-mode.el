@@ -24,6 +24,8 @@
 ;; 
 ;;; Code:
 
+(eval-when-compile (require 'cl))
+
 (require 'project-helper)
 (require 'compile)
 (require 'fdb)
@@ -95,6 +97,7 @@
 (defvar as3-flyparse-path-to-variable-def-name
   (append as3-flyparse-path-to-variable-def '("VAR_DECLARATION" "NAME")))
 
+
 (defvar as3-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c C-c") 'comment-region)
@@ -105,7 +108,7 @@
   (let ((st (make-syntax-table)))
     (modify-syntax-entry ?\" "\""   st)
     (modify-syntax-entry ?\' "\""   st)
-    (modify-syntax-entry ?_  "_"    st)
+    (modify-syntax-entry ?_  "w"    st)
     (modify-syntax-entry ?\\ "\\"   st)
     (modify-syntax-entry ?{ "("   st)
     (modify-syntax-entry ?} ")"   st)
@@ -209,12 +212,7 @@
 (defvar as3-command-library 
   '(("hoist-constant" . "as3-hoist-as-constant")
     ("hoist-method" . "as3-hoist-as-method")
-    ("clear-method" . "as3-clear-this-method")
-    ("copy-method" . "as3-copy-method")
-    ("copy-contents-of-method" . "as3-copy-contents-of-method")
     ("import" . "as3-new-import")
-    ("kill-method" . "as3-kill-this-method")
-    ("splice-exp-into-string" . "as3-splice-exp-into-string")
     ("accessors" . "as3-getter-setter")
     ("flip-to-y" . "as3-copy-and-flip-line")
     ("create-getter" . "as3-create-getter-from-var-def-at-point")
@@ -222,18 +220,13 @@
     ("create-getter-and-setter" . "as3-create-getter-and-setter-from-var-def-at-point")
     ("create-subclass" . "as3-create-subclass")
     ("create-from-template" . "as3-create-from-template")
-    ("create-private-var" . "as3-create-private-var")
+    ("create-private-var" . "as3-create-private-var-at-point")
     ("goto-def" . "as3-goto-def")
-    ("edit-var-def" . "as3-edit-var-def")
     ("switch-to-super" . "as3-switch-to-super")
     ("switch-to-subclass" . "as3-switch-to-subclass")
-    ("show-sig" . "as3-show-signature-for-word")
-    ("paint-fill" . "as3-paint-fill")
     ("organize-imports" . "as3-alphabetize-imports")
     ("asdoc-method" . "as3-asdoc-method")
     ("asdoc-class" . "as3-asdoc-class")
-    ("show-class-member-dir" . "as3-show-members-of")
-    ("kill-all-members-except-constructor" . "as3-kill-all-but-constructor")
     ("add-event-listener" . "as3-insert-event-listener")
     ))
 
@@ -361,41 +354,281 @@
 ;; AS3 utilities ;;
 ;;;;;;;;;;;;;;;;;;;
 
-(defun as3-first-member-var-def (tree name)
-  "Return the first member variable definition for a variable named 'name', 
-   otherwise, if none is found, return nil."
-  (flyparse-query-first
-   (append 
-    as3-flyparse-path-to-class-member
-    `(("VARIABLE_DEF" (has ("VARIABLE_DEF" "VAR_DECLARATION" "NAME" ,name))))) tree))
+(defstruct as3-node "An AS3 program node." (tree nil) (file-path ""))
 
-(defun as3-first-method-def (tree name)
-  "Return the first method definition for a method names 'name', 
-   otherwise, if none is found, return nil."
-  (flyparse-query-first
-   (append 
-    as3-flyparse-path-to-class-member 
-    `(("METHOD_DEF" (has ("METHOD_DEF" "METHOD_NAME" "NAME" ,name))))) tree))
+(defun as3-class-for-node (an-as3-node) 
+  "Get the as3-class that defined this node."
+  (make-as3-class 
+   :tree (flyparse-get-cached-tree (as3-node-file-path an-as3-node)) 
+   :file-path (as3-node-file-path an-as3-node)))
 
-(defun as3-first-class-name (tree)
-  "Return the first class name found in tree."
-  (flyparse-tree-type 
-   (flyparse-query-first
-    as3-flyparse-path-to-class-name tree)))
+
+
+
+
+(defstruct (as3-class (:include as3-node)) "An AS3 class." )
+
+(defun as3-class-named (name)
+  "Return the class corresponding with the given name."
+  (catch 'return-now 
+    (flyparse-for-each-cached-tree
+     (lambda (path tree)
+       (let ((class-name-tree (flyparse-query-first 
+			       as3-flyparse-path-to-class-name tree)))
+	 (if class-name-tree
+	     (let ((class-name (flyparse-tree-as-text class-name-tree)))
+	       (if (equal class-name name)
+		   (throw 'return-now 
+			  (make-as3-class :tree tree :file-path path))))
+	   ))
+       ))
+    ))
+
+(defun as3-current-class () 
+  "Get the class for the current buffer."
+  (make-as3-class :tree flyparse-newest-parse-tree :file-path buffer-file-name))
+
+(defun as3-class-name (an-as3-class) 
+  "Return the name of the given class."
+  (let* ((class-tree (as3-class-tree an-as3-class))
+	 (class-ident (flyparse-query-first as3-flyparse-path-to-class-ident class-tree)))
+    (if class-ident
+	(flyparse-tree-as-text class-ident))))
+
+(defun as3-current-class-name ()
+  "Return the name of the current class in the active buffer."
+  (as3-class-name (as3-current-class)))
+
+(defun as3-super-class-for-class (an-as3-class)
+  "Return the super-class of given class."
+  (let* ((class-tree (as3-class-tree an-as3-class))
+	 (extends-tree (flyparse-query-first as3-flyparse-path-to-extends-name class-tree)))
+    (if extends-tree
+	(as3-class-named (flyparse-tree-as-text extends-tree)))))
+
+(defun as3-subclasses-for-class (an-as3-class)
+  "Return a list the direct subclasses for an-as3-class."
+  (let ((class-name (as3-class-name an-as3-class))
+	(subclasses '()))
+    (flyparse-for-each-cached-tree 
+     (lambda (path tree)
+       (let ((subclass-name-tree (flyparse-query-first 
+				  as3-flyparse-path-to-class-name tree))
+	     (extends-name-tree (flyparse-query-first 
+				 as3-flyparse-path-to-extends-name tree)))
+	 (if (and extends-name-tree subclass-name-tree)
+	     (let ((subclass-name (flyparse-tree-type subclass-name-tree))
+		   (extends-name (flyparse-tree-type extends-name-tree)))
+	       (if (equal class-name extends-name)
+		   (push (make-as3-class :tree tree :file-path path) subclasses))))
+	 )))
+    subclasses
+    ))
+
+
+(defun as3-class-chain-starting-at (an-as3-class)
+  "Return the inheritance chain starting at an-as3-class"
+  (let ((super (as3-super-class-for-class class-tree)))
+    (if super
+	(append (list an-as3-class) (as3-class-chain-starting-at super))
+      (list an-as3-class))))
+
+
+
+
+
+(defstruct (as3-method (:include as3-node)) "An AS3 instance method." )
+
+(defun as3-instance-methods (an-as3-class)
+  "Get all instance methods of an-as3-class."
+  (let ((class-tree (as3-class-tree an-as3-class)))
+    (mapcar (lambda (tree)
+	      (make-as3-method :tree tree :file-path (as3-class-file-path an-as3-class)))
+	    (flyparse-query-all as3-flyparse-path-to-method-def class-tree))))
+
+(defun as3-method-name (an-as3-method)
+  (flyparse-tree-as-text (flyparse-query-first '("METHOD_DEF" "METHOD_NAME" "NAME") (as3-method-tree an-as3-method))))
+
+(defun as3-method-return-type (an-as3-method)
+  (let ((type-tree (flyparse-query-first '("METHOD_DEF" "TYPE_SPEC" "TYPE") (as3-method-tree an-as3-method))))
+    (if (null type-tree)
+	"void"
+      (flyparse-tree-as-text type-tree))))
+
+(defun as3-method-modifiers (an-as3-method)
+  (mapcar (lambda (ea) (flyparse-tree-as-text ea))
+	  (flyparse-query-all '("METHOD_DEF" "MODIFIER_LIST" *) (as3-method-tree an-as3-method))))
+
+(defun as3-method-parameters (an-as3-method)
+  (mapcar (lambda (ea) (make-as3-formal-parameter :tree ea :file-path (as3-method-file-path an-as3-method)))
+	  (flyparse-query-all '("METHOD_DEF" "PARAMS" "PARAM") (as3-method-tree an-as3-method))))
+
+(defun as3-method-parameter-types (an-as3-method)
+  (mapcar (lambda (ea) (flyparse-tree-as-text ea))
+	  (flyparse-query-all '("METHOD_DEF" "PARAMS" "PARAM" "TYPE_SPEC" "TYPE") (as3-method-tree an-as3-method))))
+
+
+(defun as3-pretty-method-desc (an-as3-method)
+  "Return the a pretty stringified description of method."
+  (let* ((name (as3-method-name an-as3-method))
+	 (type (as3-method-return-type an-as3-method))
+	 (params (as3-method-parameters an-as3-method))
+	 (modifiers (as3-method-modifiers an-as3-method))
+	 )
+    (format "%s %s(%s):%s" 
+	    (mapconcat 'identity modifiers " ") 
+	    name 
+	    (mapconcat (lambda (ea) (format "%s:%s" (as3-formal-parameter-name ea) (as3-formal-parameter-type ea))) params ", ")
+	    type
+	    )
+    ))
+
+(defun as3-method-at-point (pos)
+  "The method at pos in current buffer, or nil if not positioned in a method."
+  (let ((tree (flyparse-query-first 
+	       (append as3-flyparse-path-to-class-block '(("CLASS_MEMBER" in) "METHOD_DEF")))))
+    (if tree
+	(make-as3-method :tree tree :file-path buffer-file-name))))
+
+
+(defun as3-methods-named (name &optional type-name)
+  "Get all methods with name, for type (if provided)"
+  (let ((methods '()))
+    (flyparse-for-each-cached-tree 
+     (lambda (path tree)
+       (let* ((class (make-as3-class :tree tree :file-path path))
+	      (class-name (as3-class-name class)))
+	 (if (or (null type-name) (equal type-name class-name))
+	     (let ((method (as3-method-named class name)))
+	       (if method (push method methods)))
+	   ))))
+    methods
+    ))
+
+
+(defun as3-method-named (an-as3-class name)
+  "Return the first method in class for a method names 'name',
+   otherwise, if none is found, return nil."
+  (let ((method-tree
+	 (flyparse-query-first
+	  (append 
+	   as3-flyparse-path-to-class-member 
+	   `(("METHOD_DEF" (has ("METHOD_DEF" "METHOD_NAME" "NAME" ,name))))) (as3-class-tree an-as3-class))))
+    (if method-tree
+	(make-as3-method :tree method-tree :file-path (as3-class-file-path an-as3-class)))))
+
+
+
+(defstruct (as3-member-var (:include as3-node)) "An AS3 member variable." )
+
+(defun as3-member-var-at-point ()
+  (let ((var-tree
+	 (flyparse-query-first 
+	  (append as3-flyparse-path-to-class-block '(("CLASS_MEMBER" in) "VARIABLE_DEF")))))
+    (if var-tree
+	(make-as3-member-var :tree var-tree :file-path buffer-file-name))))
+
+(defun as3-member-var-named (an-as3-class name)
+  "Return the first member variable named 'name' in class, 
+   otherwise, if none is found, return nil."
+  (let ((var-tree
+	 (flyparse-query-first
+	  (append 
+	   as3-flyparse-path-to-class-member
+	   `(("VARIABLE_DEF" (has ("VARIABLE_DEF" "VAR_DECLARATION" "NAME" ,name))))) (as3-class-tree an-as3-class))))
+    (if var-tree
+	(make-as3-member-var :tree var-tree :file-path (as3-class-file-path an-as3-class)))))
+
+(defun as3-member-var-name (an-as3-member-var)
+  "Return name of member var definition."
+  (flyparse-tree-as-text (flyparse-query-first 
+			  '("VARIABLE_DEF" "VAR_DECLARATION" *) 
+			  (as3-member-var-tree an-as3-member-var))))
+
+(defun as3-member-var-type (an-as3-member-var)
+  "Return type name for member var definition."
+  (flyparse-tree-as-text (flyparse-query-first 
+			  '("VARIABLE_DEF" "VAR_DECLARATION" "TYPE_SPEC" "TYPE") 
+			  (as3-member-var-tree an-as3-member-var))))
+
+(defun as3-getter-for (an-as3-member-var)
+  "Return text of a variable getter for var tree."
+  (let ((type (as3-member-var-type an-as3-member-var))
+	(name (as3-member-var-name an-as3-member-var)))
+    (format "public function get %s():%s { return %s }" (replace-regexp-in-string "_" "" name) type name)))
+
+(defun as3-setter-for (an-as3-member-var)
+  "Return text of a variable setter for var-def tree."
+  (let ((type (as3-member-var-type an-as3-member-var))
+	(name (as3-member-var-name an-as3-member-var)))
+    (format "public function set %s(val:%s):void { %s = val }"
+	    (replace-regexp-in-string "_" "" name) type name)))
+
+
+
+
+
+
+(defstruct (as3-var-declaration (:include as3-node)) "An AS3 local variable declaration." )
+
+(defun as3-var-declaration-named (an-as3-method name)
+  "Return the first variable definition for a variable named 'name' in method-tree, 
+   otherwise, if none is found, return nil."
+  (let ((var-tree
+	 (flyparse-search
+	  `("VAR_DECLARATION" (has ("VAR_DECLARATION" "NAME" ,name))) (as3-method-tree an-as3-method))))
+    (if var-tree
+	(make-as3-var-declaration :tree var-tree :file-path (as3-method-file-path an-as3-method)))))
+
+
+(defun as3-var-declaration-type (an-as3-var-declaration)
+  "Return the name of the parameter's type declaration."
+  (let ((type-tree 
+	 (flyparse-search '("TYPE")
+			  (as3-var-declaration-tree an-as3-var-declaration))))
+    (if type-tree
+	(flyparse-tree-as-text type-tree))))
+
+
+
+
+(defstruct (as3-formal-parameter (:include as3-node)) "An AS3 formal-parameter." )
+
+(defun as3-formal-parameter-named (an-as3-method name)
+  "Return the first method parameter with provided name."
+  (let ((param-tree
+	 (flyparse-query-first `("METHOD_DEF" "PARAMS" ("PARAM" (has ("PARAM" ("NAME" (text-match ,name)))))) 
+			       (as3-method-tree an-as3-method))))
+    (if param-tree
+	(make-as3-formal-parameter :tree param-tree :file-path (as3-method-file-path an-as3-method)))))
+
+
+(defun as3-formal-parameter-type (an-as3-formal-parameter)
+  "Return the name of the parameter's type declaration."
+  (let ((type-tree 
+	 (flyparse-query-first '("PARAM" "TYPE_SPEC" "TYPE") 
+			       (as3-formal-parameter-tree an-as3-formal-parameter))))
+    (if type-tree
+	(flyparse-tree-as-text type-tree))))
+
+
+(defun as3-formal-parameter-name (an-as3-formal-parameter)
+  "Return the parameter's name."
+  (let ((name-tree 
+	 (flyparse-query-first '("PARAM" "NAME") 
+			       (as3-formal-parameter-tree an-as3-formal-parameter))))
+    (if name-tree
+	(flyparse-tree-as-text name-tree))))
+
+
 
 (defun as3-name-at-point (pos)
   (let ((var-name-tree (flyparse-containing-tree-of-type '("NAME"))))
     (if var-name-tree
 	(flyparse-tree-type (flyparse-query-first '("NAME" *) var-name-tree)))))
 
-(defun as3-class-name ()
-  "Return the name of the current class."
-  (let ((class-ident (flyparse-query-first as3-flyparse-path-to-class-ident)))
-    (if class-ident
-	(flyparse-tree-as-text class-ident)
-      nil)))
 
-(defun as3-constant-type (constant-tree)
+(defun as3-type-of-literal (constant-tree)
   "Examine a flyparse tree of 'constant' type, and return its actionscript type.'"
   (cond ((flyparse-has-subtree-of-type-p constant-tree "LITERAL_NUMBER") "Number")
 	((flyparse-has-subtree-of-type-p constant-tree "LITERAL_STRING") "String")
@@ -404,86 +637,39 @@
 	(t "Object")))
 
 
-(defun as3-getter-for (var-def)
-  "Return text of a variable getter for var-def tree."
-  (let ((type (flyparse-query-first 
-	       '("VARIABLE_DEF" "VAR_DECLARATION" "TYPE_SPEC" "TYPE") var-def))
-	(name (flyparse-query-first 
-	       '("VARIABLE_DEF" "VAR_DECLARATION" *) var-def)))
-    (format "public function get %s():%s { return %s }"
-	    (replace-regexp-in-string "_" "" (flyparse-tree-as-text name))
-	    (flyparse-tree-as-text type)
-	    (flyparse-tree-as-text name))))
+(defun as3-var-type-at-point (name point)
+  "For the given name at the given buffer point, what is the name of the type of the variable?"
+  (if (equal name "this")
+      (as3-current-class-name)
+    (let ((current-class (as3-current-class))
+	  (current-method (as3-method-at-point point)))
+      (if (not current-method)
+	  (message "Point is not in a method.")
+	(let* ((member-var-def (as3-member-var-named current-class name))
+	       (local-var-def (as3-var-declaration-named current-method name))
+	       (method-param (as3-formal-parameter-named current-method name)))
+	  (cond
+	   (local-var-def (as3-var-declaration-type local-var-def))
+	   (method-param (as3-formal-parameter-type method-param))
+	   (member-var-def (as3-member-var-type member-var-def))
+	   )
+	  )))))
 
 
-(defun as3-setter-for (var-def)
-  "Return text of a variable setter for var-def tree."
-  (let ((type (flyparse-query-first 
-	       '("VARIABLE_DEF" "VAR_DECLARATION" "TYPE_SPEC" "TYPE") var-def))
-	(name (flyparse-query-first 
-	       '("VARIABLE_DEF" "VAR_DECLARATION" *) var-def)))
-    (format "public function set %s(val:%s):void { %s = val }"
-	    (replace-regexp-in-string "_" "" (flyparse-tree-as-text name))
-	    (flyparse-tree-as-text type)
-	    (flyparse-tree-as-text name))))
-
-(defun as3-method-name (tree)
-  (flyparse-tree-as-text (flyparse-query-first '("METHOD_DEF" "METHOD_NAME" "NAME") tree)))
-
-(defun as3-method-return-type (tree)
-  (let ((type-tree (flyparse-query-first '("METHOD_DEF" "TYPE_SPEC" "TYPE") tree)))
-    (if (null type-tree)
-	"void"
-      (flyparse-tree-as-text type-tree))))
-
-(defun as3-method-modifiers (tree)
-  (mapcar (lambda (ea) (flyparse-tree-as-text ea))
-	  (flyparse-query-all '("METHOD_DEF" "MODIFIER_LIST" *) tree)))
-
-(defun as3-method-parameter-types (tree)
-  (mapcar (lambda (ea) (flyparse-tree-as-text ea))
-	  (flyparse-query-all '("METHOD_DEF" "PARAMS" "PARAM" "TYPE_SPEC" "TYPE") tree)))
-
-(defun as3-method-parameter-names (tree)
-  (mapcar (lambda (ea) (flyparse-tree-as-text ea))
-	  (flyparse-query-all '("METHOD_DEF" "PARAMS" "PARAM" "NAME") tree)))
-
-(defun as3-method-parameter-name-type-pairs (tree)
-  (mapcar (lambda (ea) (list
-			(flyparse-tree-as-text (flyparse-query-first '("PARAM" "NAME") ea))
-			(flyparse-tree-as-text (flyparse-query-first '("PARAM" "TYPE_SPEC" "TYPE") ea))
-			))
-	  (flyparse-query-all '("METHOD_DEF" "PARAMS" "PARAM") tree)))
-
-(defun as3-pretty-method-desc (tree)
-  "Return the a pretty stringified description of tree (a method tree)"
-  (let* ((name (as3-method-name tree))
-	 (type (as3-method-return-type tree))
-	 (param-name-types (as3-method-parameter-name-type-pairs tree))
-	 (modifiers (as3-method-modifiers tree))
-	 )
-    (format "%s %s(%s):%s" 
-	    (mapconcat 'identity modifiers " ") 
-	    name 
-	    (mapconcat (lambda (ea) (format "%s:%s" (first ea) (second ea))) param-name-types ", ") 
-	    type
-	    )
-    ))
-
-(defun as3-point-after-last-var-def (&optional tree)
+(defun as3-point-after-last-var-def (&optional an-as3-class)
   (flyparse-tree-end-offset 
    (flyparse-query-last as3-flyparse-path-to-variable-def 
-			(or tree flyparse-newest-parse-tree))))
+			(if an-as3-class (as3-class-tree an-as3-class) flyparse-newest-parse-tree))))
 
-(defun as3-point-after-last-const-def (&optional tree)
+(defun as3-point-after-last-const-def (&optional an-as3-class)
   (flyparse-tree-end-offset 
    (flyparse-query-last (append as3-flyparse-path-to-class-member '(("VARIABLE_DEF" (has ("VARIABLE_DEF" "const")))))
-			(or tree flyparse-newest-parse-tree))))
+			(if an-as3-class (as3-class-tree an-as3-class) flyparse-newest-parse-tree))))
 
-(defun as3-point-at-beginning-of-type-block (&optional tree)
+(defun as3-point-at-beginning-of-type-block (&optional an-as3-class)
   (flyparse-tree-beg-offset 
    (flyparse-query-first as3-flyparse-path-to-class-block
-			 (or tree flyparse-newest-parse-tree))))
+			 (if an-as3-class (as3-class-tree an-as3-class) flyparse-newest-parse-tree))))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -517,84 +703,29 @@
 (defun as3-switch-to-super ()
   "Open the file containing this this class's superclass and switch to it."
   (interactive)
-  (let ((class-name-tree (flyparse-query-first 
-			  as3-flyparse-path-to-class-name))
-	(extends-name-tree (flyparse-query-first 
-			    as3-flyparse-path-to-extends-name)))
-    (if (and class-name-tree extends-name-tree)
-	(let* ((class-name (flyparse-tree-type class-name-tree))
-	       (extends-name (flyparse-tree-type extends-name-tree)))
-	  (catch 'return-now
-	    (flyparse-for-each-cached-tree 
-	     (lambda (path tree)
-	       (let ((class-name-tree (flyparse-query-first as3-flyparse-path-to-class-name tree)))
-		 (if class-name-tree
-		     (let ((class-name (flyparse-tree-type class-name-tree)))
-		       (if (equal class-name extends-name)
-			   (progn
-			     (find-file-other-window path)
-			     (throw 'return-now nil))))))))
-	    (message "Sorry, could not locate superclass of %s." class-name)))
-      (message "This buffer does not contain an AS3 class with an extends clause."))))
+  (let* ((class (as3-current-class))
+	 (super (as3-super-class-for-class (as3-current-class))))
+    (if super
+	(find-file-other-window (as3-class-file-path super))
+      (message "Sorry, could not locate superclass of %s." (as3-class-name class)))))
+
 
 (defun as3-switch-to-subclass ()
   "Offer all subclasses of current class as option, switch to chosen subclass."
   (interactive)
-  (let ((class-name-tree (flyparse-query-first 
-			  as3-flyparse-path-to-class-name)))
-    (if class-name-tree
-	(let ((class-name (flyparse-tree-type class-name-tree))
-	      (found-subclasses '()))
-	  (flyparse-for-each-cached-tree 
-	   (lambda (path tree)
-	     (let ((subclass-name-tree (flyparse-query-first 
-					as3-flyparse-path-to-class-name tree))
-		   (extends-name-tree (flyparse-query-first 
-				       as3-flyparse-path-to-extends-name tree)))
-	       (if (and extends-name-tree subclass-name-tree)
-		   (let ((subclass-name (flyparse-tree-type subclass-name-tree))
-			 (extends-name (flyparse-tree-type extends-name-tree)))
-		     (if (equal class-name extends-name)
-			 (push `(,subclass-name . ,path) found-subclasses)))))))
-	  (if (not (null found-subclasses))
-	      (let* ((key (ido-completing-read "Select a subclass: "
-					       found-subclasses 
-					       nil t nil))
-		     (path (cdr (assoc key found-subclasses))))
-		(find-file-other-window path))
-	    (message "Sorry, did not find any subclasses for %s." class-name)))
-      (message "This buffer does not contain an AS3 class."))))
-
-
-(defun as3-show-members-of (pos)
-  "List the members of the class under point in a temp buffer."
-  (interactive (list (point)))
-  (let ((name (as3-name-at-point pos)))
-    (if name
-	(let ((found nil))
-	  (flyparse-for-each-cached-tree
-	   (lambda (path tree)
-	     (let ((class-name-tree (flyparse-query-first 
-				     as3-flyparse-path-to-class-name tree)))
-	       (if class-name-tree
-		   (let ((class-name (flyparse-tree-type class-name-tree)))
-		     (if (equal class-name name)
-			 (setf found `(,path ,tree))))))))
-	  (if (not (null found))
-	      (let ((path (first found))
-		    (tree (second found)))
-		(switch-to-buffer-other-window (format "*%s members*" name))
-		(insert "\n")
-		(let* ((method-trees (flyparse-query-all as3-flyparse-path-to-method-def tree)))
-		  (mapc (lambda (meth-tree) 
-			  (insert (format "%s\n\n" (as3-pretty-method-desc meth-tree))))
-			method-trees))
-		(setq buffer-read-only t)
-		(use-local-map (make-sparse-keymap))
-		(define-key (current-local-map) (kbd "q") 'kill-buffer-and-window)
-		(goto-char (point-min)))
-	    (message "Sorry, did not find class for %s." name)))
-      (message "Not positioned over class name."))))
+  (let* ((class (as3-current-class))
+	 (subclasses (as3-subclasses-for-class class))
+	 (choices (mapcar (lambda (c)
+			    `(,(as3-class-name c) ,(as3-class-file-path c))
+			    ) subclasses)))
+    (if (not (null choices))
+	(let* ((key (ido-completing-read "Select a subclass: "
+					 choices 
+					 nil t nil))
+	       (path (cdr (assoc key choices))))
+	  (find-file-other-window path))
+      (message "Sorry, did not find any subclasses for %s." (as3-class-name class))
+      )))
 
 
 (defun as3-hoist-as-method (beg end)
@@ -602,7 +733,7 @@
   (interactive (list (mark) (point)))
   (let ((subtrees (flyparse-subtrees-contained-in-region beg end))
 	(in-method (flyparse-containing-tree-of-type "METHOD_DEF")))
-    
+	
     (if (and in-method (not (null subtrees)))
 	(let ((content-string (flyparse-region-to-string subtrees))
 	      (method-name (read-string "Method name: ")))
@@ -618,6 +749,7 @@
 	  (indent-region (point-min) (point-max)))
       (message "Must select at least one statement within a method."))))
 
+
 (defun as3-new-import (import-name)
   "Add a new import statement."
   (interactive (list (read-string "Import identifier: ")))
@@ -630,40 +762,6 @@
 	  (insert (format "import %s;" import-name))
 	  (indent-according-to-mode))
       (message "Could not find import list."))))
-
-(defun as3-goto-first-boolean-method ()
-  "Just a test of flyparse's capabilities"
-  (interactive)
-  (let ((method (flyparse-query-first 
-		 (append as3-flyparse-path-to-class-member
-			 '(("METHOD_DEF" (has ("METHOD_DEF" "TYPE_SPEC" "TYPE" "NAME" "Boolean"))))))))
-    (if method
-	(goto-char (flyparse-tree-beg-offset method)))))
-
-
-
-
-(defun as3-kill-this-method (pos)
-  "Remove a method to the kill ring."
-  (interactive (list (point)))
-  (let ((method (flyparse-query-first 
-		 (append as3-flyparse-path-to-class-block '(("CLASS_MEMBER" in) "METHOD_DEF")))))
-    (if method
-	(flyparse-kill-tree method)
-      (message "Not inside a method."))))
-
-
-(defun as3-kill-all-but-constructor ()
-  "Remove a method to the kill ring."
-  (interactive)
-  (let ((class-name (as3-class-name)))
-    (if class-name
-	(flyparse-kill-trees 
-	 (flyparse-query 
-	  `("COMPILATION_UNIT" "PACKAGE_DECL" "CLASS_DEF" "TYPE_BLOCK" 
-	    ("CLASS_MEMBER" (has-none ("CLASS_MEMBER" "METHOD_DEF" ("METHOD_NAME" (text-match ,class-name))))))
-	  flyparse-newest-parse-tree))
-      (message "Couldn't get current class's name"))))
 
 
 (defun as3-clear-this-method (pos)
@@ -683,18 +781,6 @@
 	  (indent-according-to-mode))
       (message "Not inside a method."))))
 
-(defun as3-copy-contents-of-method (pos)
-  "Save all statements from a method to the kill ring."
-  (interactive (list (point)))
-  (let ((code (flyparse-query-first 
-	       (append as3-flyparse-path-to-class-block '(("CLASS_MEMBER" in) "METHOD_DEF" "BLOCK")))))
-    (if code
-	(progn
-	  (goto-char (+ 1 (flyparse-tree-beg-offset code)))
-	  (kill-ring-save (+ 1 (flyparse-tree-beg-offset code))
-			  (flyparse-tree-end-offset code))
-	  (message "Saved method contents to kill-ring."))
-      (message "Not inside a method."))))
 
 (defun as3-create-private-var (name type pos)
   (goto-char pos)
@@ -702,6 +788,7 @@
   (newline)
   (insert (format "private var _%s:%s;" name type))
   (indent-according-to-mode))
+
 
 (defun as3-create-private-var-at-point (pos)
   (interactive (list (point)))
@@ -713,8 +800,7 @@
 (defun as3-create-getter-and-setter-from-var-def-at-point (pos)
   "Create a getter and a setter for the var definition under point."
   (interactive (list (point)))
-  (let ((var-def (flyparse-query-first 
-		  (append as3-flyparse-path-to-class-block '(("CLASS_MEMBER" in) "VARIABLE_DEF")))))
+  (let ((var-def (as3-member-var-at-point)))
     (if var-def
 	(progn
 	  (end-of-line)
@@ -730,7 +816,7 @@
 (defun as3-create-getter-from-var-def-at-point (pos)
   "Create a getter for the var definition under point."
   (interactive (list (point)))
-  (let ((var-def (flyparse-directed-search '("VARIABLE_DEF"))))
+  (let ((var-def (as3-member-var-at-point)))
     (if var-def
 	(progn
 	  (end-of-line)
@@ -742,8 +828,7 @@
 (defun as3-create-setter-from-var-def-at-point (pos)
   "Create a setter for the var definition under point."
   (interactive (list (point)))
-  (let ((var-def (flyparse-query-first 
-		  (append as3-flyparse-path-to-class-block '(("CLASS_MEMBER" in) "VARIABLE_DEF")))))
+  (let ((var-def (as3-member-var-at-point)))
     (if var-def
 	(progn
 	  (end-of-line)
@@ -752,18 +837,6 @@
 	  (indent-according-to-mode))
       (message "Not inside a variable definition."))))
 
-(defun as3-copy-method (pos)
-  "Save all statements from a method to the kill ring."
-  (interactive (list (point)))
-  (let ((method (flyparse-query-first 
-		 (append as3-flyparse-path-to-class-block '(("CLASS_MEMBER" in) "METHOD_DEF")))))
-    (if method
-	(progn
-	  (goto-char (flyparse-tree-beg-offset method))
-	  (kill-ring-save (flyparse-tree-beg-offset method)
-			  (+ 1 (flyparse-tree-end-offset method)))
-	  (message "Saved method to kill-ring."))
-      (message "Not inside a method."))))
 
 (defun as3-create-subclass ()
   "Create and switch to a new buffer containing a subclass of the current class."
@@ -862,36 +935,6 @@
       )))
 
 
-
-(defun as3-edit-var-def (pos)
-  "Edit the initial value of the var referenced under cursor, within this class. "
-  (interactive (list (point)))
-  (save-excursion
-    (let ((var-ref (flyparse-directed-search '("NAME"))))
-      (if var-ref
-	  (let* ((var-name (flyparse-tree-as-text var-ref))
-		 (var-def
-		  (flyparse-query-first 
-		   (append 
-		    as3-flyparse-path-to-class-member
-		    `(("VARIABLE_DEF" (has ("VARIABLE_DEF" "VAR_DECLARATION" "NAME" ,var-name))))))))
-	    (if var-def
-		(let ((var-init (flyparse-search '("VAR_INITIALIZER") var-def)))
-		  (if var-init
-		      (progn
-			(goto-char (flyparse-tree-beg-offset var-init))
-			(let ((new-value (read-string "Variable value: ")))
-			  (flyparse-kill-tree var-init)
-			  (insert (format "= %s" new-value))))
-		    (progn
-		      (goto-char (+ 1 (flyparse-tree-end-offset var-def)))
-		      (let ((new-value (read-string "Variable value: ")))
-			(insert (format " = %s" new-value))))
-		    ))
-	      (message "Definition for %s not found." var-name)))
-	(message "Not positioned in variable reference.")))))
-
-
 (defun as3-goto-def (pos)
   "Jump to the definition  of the variable or method referenced under cursor, 
    might be in another file."
@@ -930,43 +973,66 @@
 (define-key as3-mode-map (kbd "C-c j") 'as3-goto-def)
 
 
-(defun as3-show-signature-for-word (pos)
-  "Show the signature for the method name at pointunder cursor."
-  (interactive (list (point)))
-  (let ((meth-name (word-at-point))
-	(potential-defs '()))
-    (flyparse-for-each-cached-tree 
-     (lambda (path tree)
-       (let ((class-name (as3-first-class-name tree))
-	     (found-def (as3-first-method-def tree meth-name)))
-	 (if found-def 
-	     (push (list class-name found-def path) potential-defs)))))
-    (if (not (null potential-defs))
-	(progn
-	  (let ((buffer-name "*AS3 Method Help*"))
-	    (if (get-buffer buffer-name)
-		(kill-buffer buffer-name))
-	    (switch-to-buffer-other-window buffer-name)
-	    (insert "\n")
+(defun as3-show-method-signatures (methods)
+  "Show the signature for given methods in a temporary buffer."
+  (if (not (null methods))
+      (progn
+	(let ((buffer-name "*AS3 Method Help*"))
+	  (if (get-buffer buffer-name)
+	      (kill-buffer buffer-name))
+	  (switch-to-buffer-other-window buffer-name)
+	  (insert "\n")
+	  (mapc
+	   (lambda (ea)
+	     (insert (format "%s#       %s"
+			     (as3-class-name (as3-class-for-node ea))
+			     (as3-pretty-method-desc ea)))
+	     (make-button (point-at-bol) (point-at-eol)
+			  'face font-lock-constant-face
+			  'action `(lambda (x)
+				     (find-file-other-window ,(as3-method-file-path ea))
+				     (goto-char ,(flyparse-tree-beg-offset (as3-method-tree ea)))
+				     ))
+	     (insert "\n"))
+	   methods)
+	  (setq buffer-read-only t)
+	  (use-local-map (make-sparse-keymap))
+	  (define-key (current-local-map) (kbd "q") 'kill-buffer-and-window)
+	  (goto-char (point-min))
+	  ))))
+
+
+(defun as3-show-quick-method-help (an-as3-method)
+  "Show the signature for given method in the mini-buffer"
+  (message (format "%s" (as3-pretty-method-desc an-as3-method))))
+
+
+(defun as3-show-members-of (name)
+  "List the members of the class with name."
+  (let ((class (as3-class-named name)))
+    (if class
+	(let ((buffer-name "*AS3 Class Help*"))
+	  (if (get-buffer buffer-name)
+	      (kill-buffer buffer-name))
+	  (switch-to-buffer-other-window buffer-name)
+	  (insert (format " Members of class '%s':\n----------------------------\n" name))
+	  (let* ((methods (as3-instance-methods class)))
 	    (mapc
 	     (lambda (ea)
-	       (insert (format "%s#       %s"
-			       (first ea)
-			       (as3-pretty-method-desc (second ea))))
+	       (insert (format "%s"(as3-pretty-method-desc ea)))
 	       (make-button (point-at-bol) (point-at-eol)
 			    'face font-lock-constant-face
 			    'action `(lambda (x)
-				       (find-file-other-window ,(third ea))
-				       (goto-char ,(flyparse-tree-beg-offset (second ea)))
+				       (find-file-other-window ,(as3-method-file-path ea))
+				       (goto-char ,(flyparse-tree-beg-offset (as3-method-tree ea)))
 				       ))
 	       (insert "\n"))
-	     potential-defs)
-	    (setq buffer-read-only t)
-	    (use-local-map (make-sparse-keymap))
-	    (define-key (current-local-map) (kbd "q") 'kill-buffer-and-window)
-	    (goto-char (point-min))
-	    ))
-      (message "No definition for %s found." meth-name))))
+	     methods))
+	  (setq buffer-read-only t)
+	  (use-local-map (make-sparse-keymap))
+	  (define-key (current-local-map) (kbd "q") 'kill-buffer-and-window)
+	  (goto-char (point-min)))
+      (message "Sorry, did not find class for %s." name))))
 
 
 (defun as3-hoist-as-constant (pos)
@@ -976,7 +1042,7 @@
   (interactive (list (point)))
   (let ((constant (flyparse-containing-tree-of-type "CONSTANT" pos)))
     (if constant
-	(let* ((const-type (as3-constant-type constant))
+	(let* ((const-type (as3-type-of-literal constant))
 	       (last-const 
 		(flyparse-query-last
 		 (append as3-flyparse-path-to-variable-def '("const"))))
@@ -1023,66 +1089,51 @@
     (indent-according-to-mode)
     ))
 
-(defun as3-splice-exp-into-string (pos)
+
+(defun as3-show-help-at-point (pos)
+  "Display contextual help for thing at point."
   (interactive (list (point)))
   (save-excursion
-    (let ((string (flyparse-containing-tree-of-type "LITERAL_STRING" pos)))
-      (if string 
-	  (let ((exp-name (read-string "Expression to splice: " )))
-	    (cond 
-	     ((flyparse-has-subtree-of-type-p string "LITERAL_DOUBLE_STRING")
-	      (insert (format "\" + %s  + \"" exp-name)))
-	     
-	     ((flyparse-has-subtree-of-type-p string "LITERAL_SINGLE_STRING")
-	      (insert (format "' + %s  + '" exp-name)))))
-	(message "Not positioned in string literal.")))))
+    (let ((start-point (point))
+	  (case-fold-search nil)) ;; Enable case sensitive searching.
+      (cond
+      
+       ;; Class name, starting with capital letter
+       ((flyparse-re-search-containing-point "\\W\\([A-Z][A-Za-z]+\\)" (point-at-bol) (point-at-eol) 1 (point))
+	(as3-show-members-of (match-string 1)))
+      
+       ;; Variable name, with or without leading underscore
+       ((flyparse-re-search-containing-point "\\W\\([a-z_][A-Za-z_]*\\)[^_A-Za-z(]" (point-at-bol) (point-at-eol) 1 (point))
+	(as3-show-members-of (as3-var-type-at-point (match-string 1) (point))))
+      
+       ;; Method invocation, pointer over the method name, target is 'this' (because there is leading whitespace)
+       ((flyparse-re-search-containing-point "\\s \\([a-z_][A-Za-z]+\\)(" (point-at-bol) (point-at-eol) 1 (point))
+	(as3-show-method-signatures (as3-methods-named (match-string 1) (as3-var-type-at-point "this" (point)))))
+      
+       ;; Method invocation, pointer over the method name, target unknown
+       ((flyparse-re-search-containing-point "\\W\\([a-z_][A-Za-z]+\\)(" (point-at-bol) (point-at-eol) 1 (point))
+	(as3-show-method-signatures (as3-methods-named (match-string 1))))
+      
+       ;; Method invocation, pointer after the open parenthesis, target unknown
+       ((flyparse-re-search-containing-point "\\W\\([a-z_][A-Za-z]+\\)(\\()?\\)" (point-at-bol) (point) 2 (point))
+	(let ((method-descriptions (as3-methods-named (match-string 1))))
+	  (if method-descriptions
+	      (as3-show-quick-method-help (first (as3-methods-named (match-string 1)))))))
+      
+       ;; Method invocation, pointer after the open parenthesis and some other crud, now positioned after a comma, target unknown
+       ((flyparse-re-search-containing-point "\\W\\([a-z_][A-Za-z]+\\)(.*\,[ ]*\\()?\\)" (point-at-bol) (point) 2 (point))
+	(let ((method-descriptions (as3-methods-named (match-string 1))))
+	  (if method-descriptions
+	      (as3-show-quick-method-help (first (as3-methods-named (match-string 1)))))))
+      
+       ;; Member access - target is a variable name
+       ((flyparse-re-search-containing-point "\\W\\([a-z_][A-Za-z_]*\\)\.\\(\\)" (point-at-bol) (point-at-eol) 2 (point))
+	(as3-show-members-of (as3-var-type-at-point (match-string 1) (point))))
+      
+       )
+      )))
+(define-key as3-mode-map (kbd "C-c h") 'as3-show-help-at-point)
 
-
-(defun as3-paint-fill (pos)
-  "Insert painting commands for the display object referenced at point."
-  (interactive (list (point)))
-  (let ((var-name (as3-name-at-point pos)))
-    (if var-name
-	(progn
-	  (end-of-line)
-	  (newline)
-	  (insert (concat var-name ".graphics.lineStyle();\n"
-			  var-name ".graphics.beginFill(0x000000, 0);\n"
-			  var-name ".graphics.drawRect(0, 0, width, height);\n"
-			  var-name ".graphics.endFill();"))
-	  (indent-region pos (point))))))
-
-(defun as3-contextual-double-quote (pos)
-  (interactive (list (point)))
-  (cond
-   ((flyparse-containing-tree-of-type "LITERAL_DOUBLE_STRING" pos)
-    (insert "\\\""))
-   (t
-    (insert "\""))))
-;;(define-key as3-mode-map (kbd "\"") 'as3-contextual-double-quote)
-
-
-(defun as3-contextual-single-quote (pos)
-  (interactive (list (point)))
-  (cond
-   ((flyparse-containing-tree-of-type "LITERAL_SINGLE_STRING" pos)
-    (insert "\\\'"))
-   (t
-    (insert "'"))))
-
-
-(defun as3-on-tab-show-method-help (pos)
-  "Search backward to find the method we are currently typing, 
-   then display contextual help."
-  (interactive (list (point)))
-  (let ((start-point (point))
-	(result (re-search-backward "\\w+(" (point-at-bol) t)))
-    (if result
-	(progn
-	  (as3-show-signature-for-word (point))
-	  (goto-char start-point))
-      (indent-for-tab-command))))
-(define-key as3-mode-map (kbd "TAB") 'as3-on-tab-show-method-help)
 
 (defun as3-asdoc-method (pos)
   (interactive (list (point)))
@@ -1110,6 +1161,7 @@
 	  (indent-region (flyparse-tree-beg-offset method-def)
 			 (flyparse-tree-end-offset method-def)))
       (message "Not in a method."))))
+
 
 (defun as3-asdoc-class (pos)
   (interactive (list (point)))
@@ -1149,12 +1201,12 @@
   "Regression tests for as3-mode ."
   (interactive)
   (let ((cmd as3-flyparse-parse-cmd))
-    
+       
     ;; Simple queries on imports
     (let* ((tree (flyparse-tree-for-string cmd "package aemon{ import com.aemon; import dog; import horse.*; public class Dude{}}")))
       (assert (= 3 
 		 (length (flyparse-query-all as3-flyparse-path-to-import-def tree)))))
-
+       
     ;; Simple queries on a class
     (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{}}")))
       (assert (= 1 
@@ -1162,14 +1214,14 @@
       (assert (equal
 	       "Dude"
 	       (flyparse-tree-type (flyparse-query-first as3-flyparse-path-to-class-name tree)))))
-    
+       
     ;; Simple queries on a class's extends clause
     (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude extends Man{}}")))
       (assert (equal "EXTENDS_CLAUSE" 
 		     (flyparse-tree-type (flyparse-query-first as3-flyparse-path-to-extends-clause tree))))
       (assert (equal "Man" 
 		     (flyparse-tree-type (flyparse-query-first as3-flyparse-path-to-extends-name tree)))))
-    
+       
     ;; Query for different types of for loop
     (let* ((tree (flyparse-tree-for-string cmd (concat "package aemon{class Dude{"
 						       "public function Dude(){"
@@ -1184,15 +1236,15 @@
 		    (flyparse-query-all (append as3-flyparse-path-to-method-def-block '("FOR_IN_LOOP")) tree))))
       (assert (= 1 (length
 		    (flyparse-query-all (append as3-flyparse-path-to-method-def-block '("FOR_EACH_LOOP")) tree)))))
-    
+       
     ;; Simple queries on friend class
     (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{}} class Dudette{private var monkey:Number;}")))
       (assert (equal "CLASS_DEF"
 		     (flyparse-tree-type (flyparse-directed-search '("CLASS_DEF") 45 tree))))
       (assert (equal "VARIABLE_DEF"
 		     (flyparse-tree-type (flyparse-directed-search '("VARIABLE_DEF") 45 tree)))))
-    
-    
+       
+       
     ;; Query for constant variable def in a friend class and it's value
     (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{}} class Dudette{public static const monkey:Number = 20;}")))
       (assert (equal "VARIABLE_DEF"
@@ -1202,39 +1254,39 @@
 								 "VAR_DECLARATION" "VAR_INITIALIZER") 
 							       (flyparse-directed-search 
 								'("VARIABLE_DEF" (has ("VARIABLE_DEF" "const"))) 45 tree))))))
-
+       
     ;; Check ending position of last var-def
     (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dudette{public var monkey:Number = 20;}}")))
-      (assert (= 58 (as3-point-after-last-var-def tree))))
-
+      (assert (= 58 (as3-point-after-last-var-def (make-as3-class :tree tree)))))
+       
     ;; Check ending position of last constant
     (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dudette{public static const monkey:Number = 20;}}")))
-      (assert (= 67 (as3-point-after-last-const-def tree))))
-    
+      (assert (= 67 (as3-point-after-last-const-def (make-as3-class :tree tree)))))
+       
     ;; test non-qualified function positioning...
     (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function Dude(){horse();}}}")))
       (assert (equal "horse"
 		     (flyparse-tree-type (flyparse-directed-search '("horse") 52 tree)))))
-    
+       
     ;; query for super
     (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function Dude(){super();}}}")))
       (assert (equal "super" (flyparse-tree-type (flyparse-directed-search '("super") 52 tree)))))
-    
+       
     ;; search for constant variable reference
     (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function Dude(){return MOOSE;}}}")))
       (assert (equal "MOOSE" (flyparse-tree-as-text (flyparse-directed-search '("NAME") 58 tree)))))
-
-    
+       
+       
     ;; literals passed to 'new' expression
     (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function Dude(){var aemon = new Crap({name: \"lkj\"});}}}")))
       (assert (equal "CONSTANT" (flyparse-tree-type (flyparse-directed-search '("CONSTANT") 78 tree)))))
-    
-    
+       
+       
     ;; new expression with Non-class expression
     (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function Dude(){var aemon = new crap({name: \"lkj\"});}}}")))
       (assert (equal "CONSTANT" (flyparse-tree-type (flyparse-directed-search '("CONSTANT") 78 tree)))))
-    
-    
+       
+       
     ;; Simple queries on a method definition
     (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function dude(dude:Dude, cat:Cat):Butt {touch()}}}")))
       (assert (= 1 
@@ -1248,13 +1300,13 @@
       (assert (equal "dude" 
 		     (flyparse-tree-type (flyparse-query-first as3-flyparse-path-to-method-name-text tree))))
       )
-
+       
     ;; query on ..rest style method param
     (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function dude(...rest:Array){touch()}}}")))
       (assert (equal "PARAM" 
 		     (flyparse-tree-type (flyparse-query-first as3-flyparse-path-to-method-param tree))))
       )
-    
+       
     ;; Simple queries on a method call
     (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function dude(){touch(1,2)}}}")))
       (assert (= 1 
@@ -1262,26 +1314,22 @@
       (assert (= 2
 		 (length (flyparse-query-all (append as3-flyparse-path-to-method-def-block '("EXPR_STMNT" "EXPR_LIST" "FUNCTION_CALL" "ARGUMENTS" "EXPR_LIST" *)) tree))))
       )
-
+       
     ;; Use helpers to get properties of method
     (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function runHorse(dude:Dude, cat:Cat):Butt{touch()}}}"))
-	   (meth-tree (flyparse-query-first as3-flyparse-path-to-method-def tree)))
-      (assert (not (null meth-tree)))
-      (assert (equal "runHorse" (as3-method-name meth-tree)))
-      (assert (equal "Butt" (as3-method-return-type meth-tree)))
-      (assert (equal '("public") (as3-method-modifiers meth-tree)))
-      (assert (equal '("Dude" "Cat") (as3-method-parameter-types meth-tree)))
-      (assert (equal '("dude" "cat") (as3-method-parameter-names meth-tree)))
-      (assert (equal '(("dude" "Dude") ("cat" "Cat")) (as3-method-parameter-name-type-pairs meth-tree)))
+	   (meth (make-as3-method :tree (flyparse-query-first as3-flyparse-path-to-method-def tree))))
+      (assert (equal "runHorse" (as3-method-name meth)))
+      (assert (equal "Butt" (as3-method-return-type meth)))
+      (assert (equal '("public") (as3-method-modifiers meth)))
+      (assert (equal '("Dude" "Cat") (as3-method-parameter-types meth)))
       )
-
+       
     ;; User method-return-type helper on void method
     (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function runHorse(dude:Dude, cat:Cat):void{touch()}}}"))
-	   (meth-tree (flyparse-query-first as3-flyparse-path-to-method-def tree)))
-      (assert (not (null meth-tree)))
-      (assert (equal "void" (as3-method-return-type meth-tree)))
+	   (meth (make-as3-method :tree (flyparse-query-first as3-flyparse-path-to-method-def tree))))
+      (assert (equal "void" (as3-method-return-type meth)))
       )
-
+       
     ;; Inline function definitions 
     (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function runHorse(dude){var dude = function(){}; var dude = function(a){return true;}; helloDude()}}}")))
       (assert (equal "FUNC_DEF" 
@@ -1290,8 +1338,8 @@
       (assert (equal "FUNC_DEF" 
 		     (flyparse-tree-type 
 		      (flyparse-directed-search '("FUNC_DEF") 109 tree)))))
-
-
+       
+       
     ;; Inline function definition with missing semicolon. This code fails to parse because of antlr's automatic error correction. After parsing
     ;; 'true', antlr looks for a semi and can't find one - it then tries to correct the situation by deleting the current tokem,  '}', and using
     ;; then following semi. 
@@ -1301,7 +1349,33 @@
       (assert (not (equal "FUNC_DEF" 
 			  (flyparse-tree-type 
 			   (flyparse-directed-search '("FUNC_DEF") 82 tree))))))
-
+       
+       
+    ;; First method with name
+    (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function runHorse(dude:Monk, horse:Horse){}}}"))
+	   (class (make-as3-class :tree tree))
+	   (method (as3-method-named class "runHorse")))
+      (assert (equal "runHorse" 
+		     (as3-method-name method))))
+       
+    ;; First param in method with name
+    (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function runHorse(dude:Monk, horse:Horse){}}}"))
+	   (class (make-as3-class :tree tree))
+	   (method (as3-method-named class "runHorse"))
+	   (param (as3-formal-parameter-named method "horse")))
+      (assert (equal "Horse"
+		     (as3-formal-parameter-type param)))
+      (assert (equal "horse"
+		     (as3-formal-parameter-name param)))
+      )
+       
+       
+    ;; Test as3-class-name
+    (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function runHorse(dude:Monk, horse:Horse){}}}")))
+      (assert (equal "Dude"
+		     (as3-class-name (make-as3-class :tree tree)))))
+       
+       
     (message "All tests passed :)")
     ))
 
