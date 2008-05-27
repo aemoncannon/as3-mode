@@ -489,8 +489,9 @@
        (let* ((class (make-as3-class :tree tree :file-path path))
 	      (class-name (as3-class-name class)))
 	 (if (or (null type-name) (equal type-name class-name))
-	     (push (as3-method-in-class-named class name)))
-	 )))
+	     (let ((method (as3-method-named class name)))
+	       (if method (push method methods)))
+	   ))))
     methods
     ))
 
@@ -565,10 +566,18 @@
    otherwise, if none is found, return nil."
   (let ((var-tree
 	 (flyparse-search
-	  `("VAR_DECLARATION" (has ("VAR_DECLARATION" "NAME" ,name))) an-as3-method)))
+	  `("VAR_DECLARATION" (has ("VAR_DECLARATION" "NAME" ,name))) (as3-method-tree an-as3-method))))
     (if var-tree
 	(make-as3-var-declaration :tree var-tree :file-path (as3-method-file-path an-as3-method)))))
 
+
+(defun as3-var-declaration-type (an-as3-var-declaration)
+  "Return the name of the parameter's type declaration."
+  (let ((type-tree 
+	 (flyparse-search '("TYPE")
+			  (as3-var-declaration-tree an-as3-var-declaration))))
+    (if type-tree
+	(flyparse-tree-as-text type-tree))))
 
 
 
@@ -630,7 +639,7 @@
 	       (local-var-def (as3-var-declaration-named current-method name))
 	       (method-param (as3-formal-parameter-named current-method name)))
 	  (cond
-	   (local-var-def (as3-member-var-type local-var-def))
+	   (local-var-def (as3-var-declaration-type local-var-def))
 	   (method-param (as3-formal-parameter-type method-param))
 	   (member-var-def (as3-member-var-type member-var-def))
 	   )
@@ -954,9 +963,9 @@
 (define-key as3-mode-map (kbd "C-c j") 'as3-goto-def)
 
 
-(defun as3-show-method-signatures (method-defs)
+(defun as3-show-method-signatures (methods)
   "Show the signature for given methods in a temporary buffer."
-  (if (not (null method-defs))
+  (if (not (null methods))
       (progn
 	(let ((buffer-name "*AS3 Method Help*"))
 	  (if (get-buffer buffer-name)
@@ -966,16 +975,16 @@
 	  (mapc
 	   (lambda (ea)
 	     (insert (format "%s#       %s"
-			     (first ea)
-			     (as3-pretty-method-desc (second ea))))
+			     (as3-class-name (as3-class-for-node ea))
+			     (as3-pretty-method-desc ea)))
 	     (make-button (point-at-bol) (point-at-eol)
 			  'face font-lock-constant-face
 			  'action `(lambda (x)
-				     (find-file-other-window ,(third ea))
-				     (goto-char ,(flyparse-tree-beg-offset (second ea)))
+				     (find-file-other-window ,(as3-method-file-path ea))
+				     (goto-char ,(flyparse-tree-beg-offset (as3-method-tree ea)))
 				     ))
 	     (insert "\n"))
-	   method-defs)
+	   methods)
 	  (setq buffer-read-only t)
 	  (use-local-map (make-sparse-keymap))
 	  (define-key (current-local-map) (kbd "q") 'kill-buffer-and-window)
@@ -983,9 +992,9 @@
 	  ))))
 
 
-(defun as3-show-quick-method-help (method-description)
+(defun as3-show-quick-method-help (an-as3-method)
   "Show the signature for given method in the mini-buffer"
-  (message (format "%s" (as3-pretty-method-desc (second method-description)))))
+  (message (format "%s" (as3-pretty-method-desc an-as3-method))))
 
 
 (defun as3-show-members-of (name)
@@ -1089,23 +1098,23 @@
 
        ;; Method invocation, pointer over the method name, target is 'this' (because there is leading whitespace)
        ((flyparse-re-search-containing-point "\\s \\([a-z_][A-Za-z]+\\)(" (point-at-bol) (point-at-eol) 1 (point))
-	(as3-show-method-signatures (as3-method-descriptions-for-name (match-string 1) (as3-var-type-at-point "this" (point)))))
+	(as3-show-method-signatures (as3-methods-named (match-string 1) (as3-var-type-at-point "this" (point)))))
 
        ;; Method invocation, pointer over the method name, target unknown
        ((flyparse-re-search-containing-point "\\W\\([a-z_][A-Za-z]+\\)(" (point-at-bol) (point-at-eol) 1 (point))
-	(as3-show-method-signatures (as3-method-descriptions-for-name (match-string 1))))
+	(as3-show-method-signatures (as3-methods-named (match-string 1))))
 
        ;; Method invocation, pointer after the open parenthesis, target unknown
        ((flyparse-re-search-containing-point "\\W\\([a-z_][A-Za-z]+\\)(\\()?\\)" (point-at-bol) (point) 2 (point))
-	(let ((method-descriptions (as3-method-descriptions-for-name (match-string 1))))
+	(let ((method-descriptions (as3-methods-named (match-string 1))))
 	  (if method-descriptions
-	      (as3-show-quick-method-help (first (as3-method-descriptions-for-name (match-string 1)))))))
+	      (as3-show-quick-method-help (first (as3-methods-named (match-string 1)))))))
 
        ;; Method invocation, pointer after the open parenthesis and some other crud, now positioned after a comma, target unknown
        ((flyparse-re-search-containing-point "\\W\\([a-z_][A-Za-z]+\\)(.*\,[ ]*\\()?\\)" (point-at-bol) (point) 2 (point))
-	(let ((method-descriptions (as3-method-descriptions-for-name (match-string 1))))
+	(let ((method-descriptions (as3-methods-named (match-string 1))))
 	  (if method-descriptions
-	      (as3-show-quick-method-help (first (as3-method-descriptions-for-name (match-string 1)))))))
+	      (as3-show-quick-method-help (first (as3-methods-named (match-string 1)))))))
 
        ;; Member access - target is a variable name
        ((flyparse-re-search-containing-point "\\W\\([a-z_][A-Za-z_]*\\)\.\\(\\)" (point-at-bol) (point-at-eol) 2 (point))
