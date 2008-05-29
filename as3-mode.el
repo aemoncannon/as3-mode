@@ -510,8 +510,11 @@
        (let* ((class (make-as3-class :tree tree :file-path path))
 	      (class-name (as3-class-name class)))
 	 (if (or (null type-name) (equal type-name class-name))
-	     (let ((method (as3-method-named class name)))
-	       (if method (push method methods)))
+	     (let* ((query (append as3-flyparse-path-to-class-member `(("METHOD_DEF" (has ("METHOD_DEF" "METHOD_NAME" "NAME" ,name))))))
+		    (method-tree (flyparse-query-first query tree)))
+	       (if method-tree 
+		   (push (make-as3-method :tree method-tree :file-path path) methods)
+		 ))
 	   ))))
     methods
     ))
