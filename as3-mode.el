@@ -428,11 +428,10 @@
 
 (defun as3-class-chain-starting-at (an-as3-class)
   "Return the inheritance chain starting at an-as3-class"
-  (let ((super (as3-super-class-for-class class-tree)))
+  (let ((super (as3-super-class-for-class an-as3-class)))
     (if super
 	(append (list an-as3-class) (as3-class-chain-starting-at super))
       (list an-as3-class))))
-
 
 
 
@@ -441,13 +440,25 @@
 
 (defun as3-instance-methods (an-as3-class)
   "Get all instance methods of an-as3-class."
-  (let ((class-tree (as3-class-tree an-as3-class)))
-    (mapcar (lambda (tree)
-	      (make-as3-method :tree tree :file-path (as3-class-file-path an-as3-class)))
-	    (flyparse-query-all as3-flyparse-path-to-method-def class-tree))))
+  (let* ((class-chain (as3-class-chain-starting-at an-as3-class)))
+    (apply 'append (mapcar (lambda (class)
+			     (let ((class-tree (as3-class-tree class)))
+			       (mapcar 
+				(lambda (tree)
+				  (make-as3-method 
+				   :tree tree 
+				   :file-path (as3-class-file-path class)))
+				(flyparse-query-all 
+				 as3-flyparse-path-to-method-def 
+				 class-tree))
+			       ))
+			   class-chain))))
 
 (defun as3-method-name (an-as3-method)
   (flyparse-tree-as-text (flyparse-query-first '("METHOD_DEF" "METHOD_NAME" "NAME") (as3-method-tree an-as3-method))))
+
+(defun as3-method-class (an-as3-method)
+  (as3-class-for-node an-as3-method))
 
 (defun as3-method-return-type (an-as3-method)
   (let ((type-tree (flyparse-query-first '("METHOD_DEF" "TYPE_SPEC" "TYPE") (as3-method-tree an-as3-method))))
@@ -1019,7 +1030,7 @@
 	  (let* ((methods (as3-instance-methods class)))
 	    (mapc
 	     (lambda (ea)
-	       (insert (format "%s"(as3-pretty-method-desc ea)))
+	       (insert (format "%s#  %s" (as3-class-name (as3-method-class ea)) (as3-pretty-method-desc ea)))
 	       (make-button (point-at-bol) (point-at-eol)
 			    'face font-lock-constant-face
 			    'action `(lambda (x)
