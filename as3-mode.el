@@ -503,9 +503,10 @@
 
 
 (defun as3-methods-named (name &optional type-name)
+  (debug)
   "Get all methods with name, for type (if provided)"
   (let ((methods '()))
-    (flyparse-for-each-cached-tree 
+    (flyparse-for-each-cached-tree
      (lambda (path tree)
        (let* ((class (make-as3-class :tree tree :file-path path))
 	      (class-name (as3-class-name class)))
@@ -520,15 +521,8 @@
 (defun as3-method-named (an-as3-class name)
   "Return the first method in class for a method names 'name',
    otherwise, if none is found, return nil."
-  (let ((method-tree
-	 (flyparse-query-first
-	  (append 
-	   as3-flyparse-path-to-class-member 
-	   `(("METHOD_DEF" (has ("METHOD_DEF" "METHOD_NAME" "NAME" ,name))))) (as3-class-tree an-as3-class))))
-    (if method-tree
-	(make-as3-method :tree method-tree :file-path (as3-class-file-path an-as3-class)))))
-
-
+  (let ((all-methods (as3-instance-methods an-as3-class)))
+    (find-if (lambda (ea) (equal (as3-method-name ea) name)) all-methods)))
 
 (defstruct (as3-member-var (:include as3-node)) "An AS3 member variable." )
 
@@ -1140,6 +1134,8 @@
        ;; Member access - target is a variable name
        ((flyparse-re-search-containing-point "\\W\\([a-z_][A-Za-z_]*\\)\.\\(\\)" (point-at-bol) (point-at-eol) 2 (point))
 	(as3-show-members-of (as3-var-type-at-point (match-string 1) (point))))
+
+       (t (message "Couldn't find any relevant help."))
       
        )
       )))
