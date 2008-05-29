@@ -502,8 +502,7 @@
 	(make-as3-method :tree tree :file-path buffer-file-name))))
 
 
-(defun as3-methods-named (name &optional type-name)
-  (debug)
+(defun as3-all-methods-named (name &optional type-name)
   "Get all methods with name, for type (if provided)"
   (let ((methods '()))
     (flyparse-for-each-cached-tree
@@ -516,7 +515,6 @@
 	   ))))
     methods
     ))
-
 
 (defun as3-method-named (an-as3-class name)
   "Return the first method in class for a method names 'name',
@@ -1113,23 +1111,25 @@
       
        ;; Method invocation, pointer over the method name, target is 'this' (because there is leading whitespace)
        ((flyparse-re-search-containing-point "\\s \\([a-z_][A-Za-z]+\\)(" (point-at-bol) (point-at-eol) 1 (point))
-	(as3-show-method-signatures (as3-methods-named (match-string 1) (as3-var-type-at-point "this" (point)))))
+	(let* ((type-name (as3-var-type-at-point "this" (point)))
+	       (class  (as3-class-named type-name)))
+	  (as3-show-quick-method-help (as3-method-named class (match-string 1)))))
       
        ;; Method invocation, pointer over the method name, target unknown
        ((flyparse-re-search-containing-point "\\W\\([a-z_][A-Za-z]+\\)(" (point-at-bol) (point-at-eol) 1 (point))
-	(as3-show-method-signatures (as3-methods-named (match-string 1))))
+	(as3-show-method-signatures (as3-all-methods-named (match-string 1))))
       
        ;; Method invocation, pointer after the open parenthesis, target unknown
        ((flyparse-re-search-containing-point "\\W\\([a-z_][A-Za-z]+\\)(\\()?\\)" (point-at-bol) (point) 2 (point))
-	(let ((method-descriptions (as3-methods-named (match-string 1))))
+	(let ((method-descriptions (as3-all-methods-named (match-string 1))))
 	  (if method-descriptions
-	      (as3-show-quick-method-help (first (as3-methods-named (match-string 1)))))))
+	      (as3-show-quick-method-help (first (as3-all-methods-named (match-string 1)))))))
       
        ;; Method invocation, pointer after the open parenthesis and some other crud, now positioned after a comma, target unknown
        ((flyparse-re-search-containing-point "\\W\\([a-z_][A-Za-z]+\\)(.*\,[ ]*\\()?\\)" (point-at-bol) (point) 2 (point))
-	(let ((method-descriptions (as3-methods-named (match-string 1))))
+	(let ((method-descriptions (as3-all-methods-named (match-string 1))))
 	  (if method-descriptions
-	      (as3-show-quick-method-help (first (as3-methods-named (match-string 1)))))))
+	      (as3-show-quick-method-help (first (as3-all-methods-named (match-string 1)))))))
       
        ;; Member access - target is a variable name
        ((flyparse-re-search-containing-point "\\W\\([a-z_][A-Za-z_]*\\)\.\\(\\)" (point-at-bol) (point-at-eol) 2 (point))
