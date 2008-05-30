@@ -377,6 +377,7 @@
 	   (push (make-as3-class :tree tree :file-path path) classes))))
     classes))
 
+
 (defun as3-class-named (name)
   "Return the class corresponding with the given name."
   (catch 'return-now 
@@ -516,20 +517,19 @@
 	(make-as3-method :tree tree :file-path buffer-file-name))))
 
 
-(defun as3-all-methods-named (name &optional type-name)
+(defun as3-all-methods-named (name)
   "Get all methods with name, for type (if provided)"
   (let ((methods '()))
     (flyparse-for-each-cached-tree
      (lambda (path tree)
        (let* ((class (make-as3-class :tree tree :file-path path))
 	      (class-name (as3-class-name class)))
-	 (if (or (null type-name) (equal type-name class-name))
-	     (let* ((query (append as3-flyparse-path-to-class-member `(("METHOD_DEF" (has ("METHOD_DEF" "METHOD_NAME" "NAME" ,name))))))
-		    (method-tree (flyparse-query-first query tree)))
-	       (if method-tree 
-		   (push (make-as3-method :tree method-tree :file-path path) methods)
-		 ))
-	   ))))
+	 (let* ((query (append as3-flyparse-path-to-class-member `(("METHOD_DEF" (has ("METHOD_DEF" "METHOD_NAME" "NAME" ,name))))))
+		(method-tree (flyparse-query-first query tree)))
+	   (if method-tree 
+	       (push (make-as3-method :tree method-tree :file-path path) methods)
+	     ))
+	 )))
     methods
     ))
 
@@ -537,7 +537,8 @@
   "Return the first method in class for a method names 'name',
    otherwise, if none is found, return nil."
   (let ((all-methods (as3-instance-methods an-as3-class)))
-    (find-if (lambda (ea) (equal (as3-method-name ea) name)) all-methods)))
+    (find-if (lambda (ea) (equal (as3-method-name ea) name)) all-methods)
+    ))
 
 (defstruct (as3-member-var (:include as3-node)) "An AS3 member variable." )
 
@@ -690,6 +691,38 @@
   (flyparse-tree-beg-offset 
    (flyparse-query-first as3-flyparse-path-to-class-block
 			 (if an-as3-class (as3-class-tree an-as3-class) flyparse-newest-parse-tree))))
+
+
+(defun as3-find-definitions-of (name &optional is-dot-accessed enclosing-method)
+  "Get all methods with name, for type (if provided)"
+  (let ((current-class (as3-current-class))
+	(methods '())
+	(member-vars '())
+	(local-vars '())
+	(params '()))
+    (if (and (not is-dot-accessed) enclosing-method)
+	(let ((member-var-def (as3-member-var-named current-class name))
+	      (method (as3-method-named current-class name))
+	      (local-var-def (as3-var-declaration-named enclosing-method name))
+	      (method-param (as3-formal-parameter-named enclosing-method name)))
+	  (if member-var-def (push member-var-def member-vars))
+	  (if method (push method methods))
+	  (if local-var-def (push local-var-def local-vars))
+	  (if method-param (push method-param params))
+	  )
+      (flyparse-for-each-cached-tree
+       (lambda (path tree)
+	 (let* ((class (make-as3-class :tree tree :file-path path))
+		(class-name (as3-class-name class)))
+	   (let* ((query (append as3-flyparse-path-to-class-member `(("METHOD_DEF" (has ("METHOD_DEF" "METHOD_NAME" "NAME" ,name))))))
+		  (method-tree (flyparse-query-first query tree)))
+	     (if method-tree 
+		 (push (make-as3-method :tree method-tree :file-path path) methods)
+	       ))
+	   ))))
+    (list methods member-vars local-vars params)
+    ))
+
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
