@@ -221,7 +221,6 @@
     ("create-subclass" . "as3-create-subclass")
     ("create-from-template" . "as3-create-from-template")
     ("create-private-var" . "as3-create-private-var-at-point")
-    ("goto-def" . "as3-goto-def")
     ("switch-to-super" . "as3-switch-to-super")
     ("switch-to-subclass" . "as3-switch-to-subclass")
     ("organize-imports" . "as3-alphabetize-imports")
@@ -229,6 +228,7 @@
     ("asdoc-class" . "as3-asdoc-class")
     ("add-event-listener" . "as3-insert-event-listener")
     ("describe-class" . "as3-describe-class-by-name")
+    ("jump-to-class" . "as3-jump-to-class-by-name")
     ))
 
 (defun as3-quick-menu ()
@@ -236,7 +236,6 @@
   (run-command-by-bookmark as3-command-library))
 
 (define-key as3-mode-map (kbd "C-c m") 'as3-quick-menu)
-(define-key as3-mode-map (kbd "C-c d") 'as3-goto-def)
 
 
 (define-derived-mode as3-mode fundamental-mode "as3-mode"
@@ -374,8 +373,9 @@
   (let ((classes '()))
     (flyparse-for-each-cached-tree
      (lambda (path tree)
-       (push (make-as3-class :tree tree :file-path path) classes))))
-  classes)
+       (if (as3-class-tree-p tree)
+	   (push (make-as3-class :tree tree :file-path path) classes))))
+    classes))
 
 (defun as3-class-named (name)
   "Return the class corresponding with the given name."
@@ -395,7 +395,8 @@
 
 (defun as3-current-class () 
   "Get the class for the current buffer."
-  (make-as3-class :tree flyparse-newest-parse-tree :file-path buffer-file-name))
+  (if (as3-class-tree-p flyparse-newest-parse-tree)
+      (make-as3-class :tree flyparse-newest-parse-tree :file-path buffer-file-name)))
 
 (defun as3-class-name (an-as3-class) 
   "Return the name of the given class."
@@ -407,6 +408,10 @@
 (defun as3-current-class-name ()
   "Return the name of the current class in the active buffer."
   (as3-class-name (as3-current-class)))
+
+(defun as3-class-tree-p (tree)
+  "Return t or nil depending on whether 'tree' is an as3 class tree."
+  (not (null (flyparse-query-first as3-flyparse-path-to-class-def tree))))
 
 (defun as3-super-class-for-class (an-as3-class)
   "Return the super-class of given class."
@@ -748,12 +753,30 @@
   (interactive)
   (let* ((classes (as3-all-classes))
 	 (choices (mapcar (lambda (c)
-			    `(,(as3-class-name c) ,(as3-class-file-path c))
+			    `(,(as3-class-name c) . ,c)
 			    ) classes)))
     (if (not (null choices))
-	(let* ((key (ido-completing-read "Select a class: "
-					 choices 
-					 nil t nil))
+	(let* ((key (ido-completing-read 
+		     (format "Select a class (%s available): " (length choices))
+		     choices 
+		     nil t nil))
+	       (chosen-class (cdr (assoc key choices))))
+	  (as3-show-members-of chosen-class))
+      )))
+
+
+(defun as3-jump-to-class-by-name ()
+  "Find a class by name, open the class's file in a new buffer & window."
+  (interactive)
+  (let* ((classes (as3-all-classes))
+	 (choices (mapcar (lambda (c)
+			    `(,(as3-class-name c) . ,(as3-class-file-path c))
+			    ) classes)))
+    (if (not (null choices))
+	(let* ((key (ido-completing-read 
+		     (format "Select a class (%s available): " (length choices))
+		     choices 
+		     nil t nil))
 	       (path (cdr (assoc key choices))))
 	  (find-file-other-window path))
       )))
@@ -966,43 +989,6 @@
       )))
 
 
-(defun as3-goto-def (pos)
-  "Jump to the definition  of the variable or method referenced under cursor, 
-   might be in another file."
-  (interactive (list (point)))
-  (let ((obj-ref (flyparse-directed-search '("NAME"))))
-    (if obj-ref
-	(let* ((obj-name (flyparse-tree-as-text obj-ref))
-	       (found-locations '()))
-	  (flyparse-for-each-cached-tree 
-	   (lambda (path tree)
-	     (let ((found-def 
-		    (or (as3-first-member-var-def tree obj-name)
-			(as3-first-method-def tree obj-name))))
-	       (if found-def 
-		   (push `(,(file-name-sans-extension (file-name-nondirectory path)) . (,path ,found-def))
-			 found-locations)))))
-	  (if (not (null found-locations))
-	      (let* ((key (if (= (length found-locations) 1)
-			      (first (first found-locations))
-			    (ido-completing-read 
-			     "Found in these locations, pick one: "
-			     found-locations 
-			     nil t nil)
-			    ))
-		     (val (cdr (assoc key found-locations)))
-		     (path (first val))
-		     (def-tree (second val))
-		     (offset (flyparse-tree-beg-offset def-tree)))
-		(if (equal path buffer-file-name)
-		    (goto-char offset)
-		  (progn
-		    (find-file-other-window path)
-		    (goto-char offset))))
-	    (message "Definition for %s not found." obj-name)))
-      (message "Not positioned in variable or method name."))))
-(define-key as3-mode-map (kbd "C-c j") 'as3-goto-def)
-
 
 (defun as3-show-method-signatures (methods)
   "Show the signature for given methods in a temporary buffer."
@@ -1038,32 +1024,31 @@
   (message (format "%s" (as3-pretty-method-desc an-as3-method))))
 
 
-(defun as3-show-members-of (name)
+(defun as3-show-members-of (an-as3-class)
   "List the members of the class with name."
-  (let ((class (as3-class-named name)))
-    (if class
-	(let ((buffer-name "*AS3 Class Help*"))
-	  (if (get-buffer buffer-name)
-	      (kill-buffer buffer-name))
-	  (switch-to-buffer-other-window buffer-name)
-	  (insert (format " Members of class '%s':\n----------------------------\n" name))
-	  (let* ((methods (as3-instance-methods class)))
-	    (mapc
-	     (lambda (ea)
-	       (insert (format "%s#  %s" (as3-class-name (as3-method-class ea)) (as3-pretty-method-desc ea)))
-	       (make-button (point-at-bol) (point-at-eol)
-			    'face font-lock-constant-face
-			    'action `(lambda (x)
-				       (find-file-other-window ,(as3-method-file-path ea))
-				       (goto-char ,(flyparse-tree-beg-offset (as3-method-tree ea)))
-				       ))
-	       (insert "\n"))
-	     methods))
-	  (setq buffer-read-only t)
-	  (use-local-map (make-sparse-keymap))
-	  (define-key (current-local-map) (kbd "q") 'kill-buffer-and-window)
-	  (goto-char (point-min)))
-      (message "Sorry, did not find class for %s." name))))
+  (let* ((class an-as3-class)
+	 (name (as3-class-name class))
+	 (buffer-name "*AS3 Class Help*"))
+    (if (get-buffer buffer-name)
+	(kill-buffer buffer-name))
+    (switch-to-buffer-other-window buffer-name)
+    (insert (format " Members of class '%s':\n----------------------------\n" name))
+    (let* ((methods (as3-instance-methods class)))
+      (mapc
+       (lambda (ea)
+	 (insert (format "%s#  %s" (as3-class-name (as3-method-class ea)) (as3-pretty-method-desc ea)))
+	 (make-button (point-at-bol) (point-at-eol)
+		      'face font-lock-constant-face
+		      'action `(lambda (x)
+				 (find-file-other-window ,(as3-method-file-path ea))
+				 (goto-char ,(flyparse-tree-beg-offset (as3-method-tree ea)))
+				 ))
+	 (insert "\n"))
+       methods))
+    (setq buffer-read-only t)
+    (use-local-map (make-sparse-keymap))
+    (define-key (current-local-map) (kbd "q") 'kill-buffer-and-window)
+    (goto-char (point-min))))
 
 
 (defun as3-hoist-as-constant (pos)
@@ -1131,11 +1116,11 @@
       
        ;; Class name, starting with capital letter
        ((flyparse-re-search-containing-point "\\W\\([A-Z][A-Za-z]+\\)" (point-at-bol) (point-at-eol) 1 (point))
-	(as3-show-members-of (match-string 1)))
+	(as3-show-members-of (as3-class-named (match-string 1))))
       
        ;; Variable name, with or without leading underscore
        ((flyparse-re-search-containing-point "\\W\\([a-z_][A-Za-z_]*\\)[^_A-Za-z(]" (point-at-bol) (point-at-eol) 1 (point))
-	(as3-show-members-of (as3-var-type-at-point (match-string 1) (point))))
+	(as3-show-members-of (as3-class-named (as3-var-type-at-point (match-string 1) (point)))))
       
        ;; Method invocation, pointer over the method name, target is 'this' (because there is leading whitespace)
        ((flyparse-re-search-containing-point "\\s \\([a-z_][A-Za-z]+\\)(" (point-at-bol) (point-at-eol) 1 (point))
@@ -1159,7 +1144,7 @@
       
        ;; Member access - target is a variable name
        ((flyparse-re-search-containing-point "\\W\\([a-z_][A-Za-z_]*\\)\.\\(\\)" (point-at-bol) (point-at-eol) 2 (point))
-	(as3-show-members-of (as3-var-type-at-point (match-string 1) (point))))
+	(as3-show-members-of (as3-class-named (as3-var-type-at-point (match-string 1) (point)))))
 
        (t (message "Couldn't find any relevant help."))
       
