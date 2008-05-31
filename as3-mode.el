@@ -641,7 +641,7 @@
     (if name-tree
 	(flyparse-tree-as-text name-tree))))
 
-
+;;;; General utilities
 
 (defun as3-name-at-point (pos)
   (let ((var-name-tree (flyparse-containing-tree-of-type '("NAME"))))
