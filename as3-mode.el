@@ -101,6 +101,10 @@
 (defvar as3-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c C-c") 'comment-region)
+    (define-key map (kbd "C-c m") 'as3-quick-menu)
+    (define-key map (kbd "C-c p") 'flymake-goto-prev-error)
+    (define-key map (kbd "C-c n") 'flymake-goto-next-error)
+    (define-key map (kbd "C-c h") 'as3-show-help-at-point)
     map)
   "Keymap for `as3-mode'.")
 
@@ -235,9 +239,6 @@
   (interactive)
   (run-command-by-bookmark as3-command-library))
 
-(define-key as3-mode-map (kbd "C-c m") 'as3-quick-menu)
-
-
 (define-derived-mode as3-mode fundamental-mode "as3-mode"
   "A major mode for editing Actionscript 3 files."
   :syntax-table as3-mode-syntax-table
@@ -346,9 +347,6 @@
 ;; Find error messages in flex compiler output:
 (push '("^\\(.*\\)(\\([0-9]+\\)): col: \\([0-9]+\\) Error: \\(.*\\)$" 1 2 3 2) compilation-error-regexp-alist)
 
-
-(define-key as3-mode-map (kbd "C-c p") 'flymake-goto-prev-error)
-(define-key as3-mode-map (kbd "C-c n") 'flymake-goto-next-error)
 
 ;;;;;;;;;;;;;;;;;;;
 ;; AS3 utilities ;;
@@ -459,7 +457,7 @@
 
 (defun as3-methods-of (an-as3-class)
   "Get all instance methods of an-as3-class."
-  (let* ((class-chain (as3-class-chain-starting-at an-as3-class)))
+  (let ((class-chain (as3-class-chain-starting-at an-as3-class)))
     (apply 'append (mapcar (lambda (class)
 			     (let ((class-tree (as3-class-tree class)))
 			       (mapcar 
@@ -513,10 +511,13 @@
 	    )
     ))
 
-(defun as3-method-at-point (pos)
-  "The method at pos in current buffer, or nil if not positioned in a method."
-  (let ((tree (flyparse-query-first 
-	       (append as3-flyparse-path-to-class-block '(("CLASS_MEMBER" in) "METHOD_DEF")))))
+(defun as3-method-at-point (pos &optional an-as3-class)
+  "The method at pos in for current class or an-as3-class if provided. nil if not positioned in a method."
+  (let* ((class (or an-as3-class (as3-current-class)))
+	 (tree (flyparse-query-first 
+		(append as3-flyparse-path-to-class-block `(("CLASS_MEMBER" (at ,pos)) "METHOD_DEF"))
+		(as3-class-tree class)
+		)))
     (if tree
 	(make-as3-method :tree tree :file-path buffer-file-name))))
 
@@ -742,23 +743,23 @@
 	(t "Object")))
 
 
-(defun as3-var-type-at-point (name point)
-  "For the given name at the given buffer point, what is the name of the type of the variable?"
-  (if (equal name "this")
-      (as3-current-class-name)
-    (let ((current-class (as3-current-class))
-	  (current-method (as3-method-at-point point)))
-      (if (not current-method)
-	  (message "Point is not in a method.")
-	(let* ((member-var-def (as3-member-var-named current-class name))
-	       (local-var-def (as3-var-declaration-named current-method name))
-	       (method-param (as3-formal-parameter-named current-method name)))
-	  (cond
-	   (local-var-def (as3-var-declaration-type local-var-def))
-	   (method-param (as3-formal-parameter-type method-param))
-	   (member-var-def (as3-member-var-type member-var-def))
-	   )
-	  )))))
+(defun as3-var-type-at-point (name point &optional an-as3-class)
+  "For the given name in the given class at the given buffer offset, what is the name of the type of the variable?"
+  (let ((class (or an-as3-class (as3-current-class))))
+    (if (equal name "this")
+	(as3-class-name class)
+      (let ((method (as3-method-at-point point class)))
+	(if (not method)
+	    (message "Point is not in a method.")
+	  (let* ((member-var-def (as3-member-var-named class name))
+		 (local-var-def (as3-var-declaration-named method name))
+		 (method-param (as3-formal-parameter-named method name)))
+	    (cond
+	     (local-var-def (as3-var-declaration-type local-var-def))
+	     (method-param (as3-formal-parameter-type method-param))
+	     (member-var-def (as3-member-var-type member-var-def))
+	     )
+	    ))))))
 
 
 (defun as3-point-after-last-var-def (&optional an-as3-class)
@@ -1180,28 +1181,30 @@
 
 	  (if methods
 	      (progn
-		(insert (format "\nMethods named '%s':\n----------------------------\n" name))
+		(insert (format "Methods named '%s':\n----------------------------\n" name))
 		(mapc describe-func methods)))
 
 	  (if member-vars
 	      (progn
-		(insert (format "\nMember Variables named '%s':\n----------------------------\n" name))
+		(insert (format "Member Variables named '%s':\n----------------------------\n" name))
 		(mapc describe-func member-vars)))
 
 	  (if local-vars
 	      (progn
-		(insert (format "\nLocal Variables named '%s':\n----------------------------\n" name))
+		(insert (format "Local Variables named '%s':\n----------------------------\n" name))
 		(mapc describe-func local-vars)))
 
 	  (if params
 	      (progn
-		(insert (format "\nParameters named '%s':\n----------------------------\n" name))
+		(insert (format "Parameters named '%s':\n----------------------------\n" name))
 		(mapc describe-func params)))
 
 	  (setq buffer-read-only t)
 	  (use-local-map (make-sparse-keymap))
 	  (define-key (current-local-map) (kbd "q") 'kill-buffer-and-window)
-	  (goto-char (point-min))))))
+	  (goto-char (point-min))
+	  (forward-line 2)
+	  ))))
 
 
 (defun as3-show-members-of (an-as3-class)
@@ -1212,7 +1215,7 @@
     (if (get-buffer buffer-name)
 	(kill-buffer buffer-name))
     (switch-to-buffer-other-window buffer-name)
-    (insert (format " Members of class '%s':\n----------------------------\n" name))
+    (insert (format "Members of class '%s':\n----------------------------\n" name))
     (let* ((methods (as3-methods-of class)))
       (mapc
        (lambda (ea)
@@ -1247,9 +1250,8 @@
 		(as3-show-quick-method-help node)
 		))
 	  (if (as3-member-var-p node)
-	      (progn
-		(insert key)
-		))
+	      (insert key)
+	    )
 	  ))))
 
 
@@ -1355,7 +1357,6 @@
       
      )
     ))
-(define-key as3-mode-map (kbd "C-c h") 'as3-show-help-at-point)
 
 
 (defun as3-asdoc-method (pos)
@@ -1423,7 +1424,12 @@
 (defun as3-mode-run-tests ()
   "Regression tests for as3-mode ."
   (interactive)
-  (let ((cmd as3-flyparse-parse-cmd))
+  (let* ((cmd as3-flyparse-parse-cmd)
+	 (make-class-fixture (lambda (str)
+			       (make-as3-class
+				:tree (flyparse-tree-for-string cmd str)
+				:file-path ""
+				))))
        
     ;; Simple queries on imports
     (let* ((tree (flyparse-tree-for-string cmd "package aemon{ import com.aemon; import dog; import horse.*; public class Dude{}}")))
@@ -1538,21 +1544,6 @@
 		 (length (flyparse-query-all (append as3-flyparse-path-to-method-def-block '("EXPR_STMNT" "EXPR_LIST" "FUNCTION_CALL" "ARGUMENTS" "EXPR_LIST" *)) tree))))
       )
        
-    ;; Use helpers to get properties of method
-    (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function runHorse(dude:Dude, cat:Cat):Butt{touch()}}}"))
-	   (meth (make-as3-method :tree (flyparse-query-first as3-flyparse-path-to-method-def tree))))
-      (assert (equal "runHorse" (as3-method-name meth)))
-      (assert (equal "Butt" (as3-method-return-type meth)))
-      (assert (equal '("public") (as3-method-modifiers meth)))
-      (assert (equal '("Dude" "Cat") (as3-method-parameter-types meth)))
-      )
-       
-    ;; User method-return-type helper on void method
-    (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function runHorse(dude:Dude, cat:Cat):void{touch()}}}"))
-	   (meth (make-as3-method :tree (flyparse-query-first as3-flyparse-path-to-method-def tree))))
-      (assert (equal "void" (as3-method-return-type meth)))
-      )
-       
     ;; Inline function definitions 
     (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function runHorse(dude){var dude = function(){}; var dude = function(a){return true;}; helloDude()}}}")))
       (assert (equal "FUNC_DEF" 
@@ -1566,7 +1557,9 @@
     ;; Inline function definition with missing semicolon. This code fails to parse because of antlr's automatic error correction. After parsing
     ;; 'true', antlr looks for a semi and can't find one - it then tries to correct the situation by deleting the current tokem,  '}', and using
     ;; then following semi. 
+    ;;
     ;; We then end up being short a '}'.
+    ;;
     (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function runHorse(dude){var dude = function(a){return true}; }}}")))
       ;; WILL FAIL
       (assert (not (equal "FUNC_DEF" 
@@ -1597,6 +1590,59 @@
     (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function runHorse(dude:Monk, horse:Horse){}}}")))
       (assert (equal "Dude"
 		     (as3-class-name (make-as3-class :tree tree)))))
+
+    ;; Use helpers to get properties of method
+    (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function runHorse(dude:Dude, cat:Cat):Butt{touch()}}}"))
+	   (meth (make-as3-method :tree (flyparse-query-first as3-flyparse-path-to-method-def tree))))
+      (assert (equal "runHorse" (as3-method-name meth)))
+      (assert (equal "Butt" (as3-method-return-type meth)))
+      (assert (equal '("public") (as3-method-modifiers meth)))
+      (assert (equal '("Dude" "Cat") (as3-method-parameter-types meth)))
+      )
+       
+    ;; User method-return-type helper on void method
+    (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function runHorse(dude:Dude, cat:Cat):void{touch()}}}"))
+	   (meth (make-as3-method :tree (flyparse-query-first as3-flyparse-path-to-method-def tree))))
+      (assert (equal "void" (as3-method-return-type meth)))
+      )
+       
+
+    ;; Test as3-method-named
+    (let* ((class (apply make-class-fixture '("package aemon{class Dude{public function runHorse(dude:Monk, horse:Horse){}}}")))
+	   (meth (as3-method-named class "runHorse")))
+      (assert (as3-method-p meth))
+      (assert (equal "runHorse" (as3-method-name meth))))
+
+
+    ;; Test as3-method-at-point
+    (let* ((class (apply make-class-fixture '("package aemon{class Dude{public function runHorse(dude:Monk, horse:Horse){}}}")))
+	   (meth (as3-method-at-point 54 class)))
+      (assert (as3-method-p meth))
+      (assert (equal "runHorse" (as3-method-name meth))))
+
+
+    ;; Test as3-var-type-at-point
+    (let* ((class (apply make-class-fixture '("package aemon{class Dude{public function runHorse(dude:Monk, horse:Horse){ trace(dude) }}}")))
+	   (type (as3-var-type-at-point "dude" 82 class)))
+      (assert (equal "Monk" type)))
+
+
+    ;; Test as3-var-type-at-point
+    (let* ((class (apply make-class-fixture '("package aemon{class Dude{public function runHorse(dude:Monk, horse:Horse){ var snake:String; trace(snake) }}}")))
+	   (type (as3-var-type-at-point "snake" 98 class)))
+      (assert (equal "String" type)))
+
+
+    ;; Test as3-var-type-at-point
+    (let* ((class (apply make-class-fixture '("package aemon{class Dude{private var friend:Friend; public function runHorse(dude:Monk){ trace(friend) }}}")))
+	   (type (as3-var-type-at-point "friend" 98 class)))
+      (assert (equal "Friend" type)))
+
+
+    ;; Test as3-methods-of
+    (let* ((class (apply make-class-fixture '("package aemon{class DudeFace{public function runHorse(dude:Monk){ trace(friend) }}}")))
+	   (methods (as3-methods-of class)))
+      (assert (equal 1 (length methods))))
        
        
     (message "All tests passed :)")
