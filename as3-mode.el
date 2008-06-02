@@ -457,7 +457,7 @@
 
 (defstruct (as3-method (:include as3-node)) "An AS3 instance method." )
 
-(defun as3-instance-methods (an-as3-class)
+(defun as3-methods-of (an-as3-class)
   "Get all instance methods of an-as3-class."
   (let* ((class-chain (as3-class-chain-starting-at an-as3-class)))
     (apply 'append (mapcar (lambda (class)
@@ -578,6 +578,22 @@
       nil
       )
     ))
+
+(defun as3-member-vars-of (an-as3-class)
+  "Get all member vars of an-as3-class."
+  (let* ((class-chain (as3-class-chain-starting-at an-as3-class)))
+    (apply 'append (mapcar (lambda (class)
+			     (let ((class-tree (as3-class-tree class)))
+			       (mapcar 
+				(lambda (tree)
+				  (make-as3-member-var 
+				   :tree tree 
+				   :file-path (as3-class-file-path class)))
+				(flyparse-query-all 
+				 as3-flyparse-path-to-variable-def
+				 class-tree))
+			       ))
+			   class-chain))))
 
 (defun as3-member-var-name (an-as3-member-var)
   "Return name of member var definition."
@@ -780,14 +796,19 @@
 	  )
       (flyparse-for-each-cached-tree
        (lambda (path tree)
-	 (let* ((class (make-as3-class :tree tree :file-path path))
-		(class-name (as3-class-name class)))
-	   (let* ((query (append as3-flyparse-path-to-class-member `(("METHOD_DEF" (has ("METHOD_DEF" "METHOD_NAME" "NAME" ,name))))))
-		  (method-tree (flyparse-query-first query tree)))
-	     (if method-tree 
-		 (push (make-as3-method :tree method-tree :file-path path) methods)
-	       ))
-	   ))))
+	 (let* ((member-var-query (append as3-flyparse-path-to-class-member `(("VARIABLE_DEF" (has ("VARIABLE_DEF" "VAR_DECLARATION" "NAME" ,name))))))
+		(method-query (append as3-flyparse-path-to-class-member `(("METHOD_DEF" (has ("METHOD_DEF" "METHOD_NAME" "NAME" ,name))))))
+		(member-var-tree (flyparse-query-first member-var-query tree))
+		(method-tree (flyparse-query-first method-query tree))
+		)
+	   (if method-tree 
+	       (push (make-as3-method :tree method-tree :file-path path) methods)
+	     )
+	   (if member-var-tree 
+	       (push (make-as3-member-var :tree member-var-tree :file-path path) member-vars)
+	     )
+	   )
+	 )))
     (list methods member-vars local-vars params)
     ))
 
@@ -1149,36 +1170,38 @@
 				(as3-node-file-path ea) 
 				(flyparse-tree-beg-offset (as3-node-tree ea)))
 	    (insert "\n"))))
-	  
-    (if (get-buffer buffer-name)
-	(kill-buffer buffer-name))
 
-    (switch-to-buffer-other-window buffer-name)
-
-    (if methods
+    (if (or methods member-vars local-vars params)
 	(progn
-	  (insert (format "\nMethods:\n----------------------------\n"))
-	  (mapc describe-func methods)))
 
-    (if member-vars
-	(progn
-	  (insert (format "\nMember Variables:\n----------------------------\n"))
-	  (mapc describe-func member-vars)))
+	  (if (get-buffer buffer-name)
+	      (kill-buffer buffer-name))
+	  (switch-to-buffer-other-window buffer-name)
 
-    (if local-vars
-	(progn
-	  (insert (format "\nLocal Variables:\n----------------------------\n"))
-	  (mapc describe-func local-vars)))
+	  (if methods
+	      (progn
+		(insert (format "\nMethods named '%s':\n----------------------------\n" name))
+		(mapc describe-func methods)))
 
-    (if params
-	(progn
-	  (insert (format "\nParameters:\n----------------------------\n"))
-	  (mapc describe-func params)))
+	  (if member-vars
+	      (progn
+		(insert (format "\nMember Variables named '%s':\n----------------------------\n" name))
+		(mapc describe-func member-vars)))
 
-    (setq buffer-read-only t)
-    (use-local-map (make-sparse-keymap))
-    (define-key (current-local-map) (kbd "q") 'kill-buffer-and-window)
-    (goto-char (point-min))))
+	  (if local-vars
+	      (progn
+		(insert (format "\nLocal Variables named '%s':\n----------------------------\n" name))
+		(mapc describe-func local-vars)))
+
+	  (if params
+	      (progn
+		(insert (format "\nParameters named '%s':\n----------------------------\n" name))
+		(mapc describe-func params)))
+
+	  (setq buffer-read-only t)
+	  (use-local-map (make-sparse-keymap))
+	  (define-key (current-local-map) (kbd "q") 'kill-buffer-and-window)
+	  (goto-char (point-min))))))
 
 
 (defun as3-show-members-of (an-as3-class)
@@ -1190,7 +1213,7 @@
 	(kill-buffer buffer-name))
     (switch-to-buffer-other-window buffer-name)
     (insert (format " Members of class '%s':\n----------------------------\n" name))
-    (let* ((methods (as3-instance-methods class)))
+    (let* ((methods (as3-methods-of class)))
       (mapc
        (lambda (ea)
 	 (insert (format "%s#  %s" (as3-class-name (as3-method-class ea)) (as3-pretty-method-desc ea)))
@@ -1201,6 +1224,33 @@
     (use-local-map (make-sparse-keymap))
     (define-key (current-local-map) (kbd "q") 'kill-buffer-and-window)
     (goto-char (point-min))))
+
+
+(defun as3-choose-member-of (an-as3-class)
+  "Give the user a list of member names to select from."
+  (let* ((class an-as3-class)
+	 (methods (as3-methods-of class))
+	 (member-vars (as3-member-vars-of class))
+    	 (method-choices (mapcar (lambda (m) `(,(as3-method-name m) . ,m)) methods))
+	 (var-choices (mapcar (lambda (v) `(,(as3-member-var-name v) . ,v)) member-vars))
+	 (choices (append method-choices var-choices)))
+    (if (not (null choices))
+	(let* ((key (ido-completing-read 
+		     (format "Members of %s: " (as3-class-name class))
+		     choices 
+		     nil t nil))
+	       (node (cdr (assoc key choices))))
+	  (if (as3-method-p node)
+	      (progn
+		(insert key)
+		(insert "(")
+		(as3-show-quick-method-help node)
+		))
+	  (if (as3-member-var-p node)
+	      (progn
+		(insert key)
+		))
+	  ))))
 
 
 (defun as3-hoist-as-constant (pos)
@@ -1261,67 +1311,50 @@
 (defun as3-show-help-at-point (pos)
   "Display contextual help for thing at point."
   (interactive (list (point)))
-  (save-excursion
-    (let ((start-point (point))
-	  (case-fold-search nil)) ;; Enable case sensitive searching.
-      (cond
+  (let ((start-point (point))
+	(case-fold-search nil)) ;; Enable case sensitive searching.
+    (cond
       
-       ;; Class name, starting with capital letter
-       ((flyparse-re-search-containing-point "\\W\\([A-Z][A-Za-z]+\\)" (point-at-bol) (point-at-eol) 1 (point))
-	(as3-show-members-of (as3-class-named (match-string 1))))
+     ;; Class name, starting with capital letter
+     ((flyparse-re-search-containing-point "\\W\\([A-Z][A-Za-z0-9]+\\)" (point-at-bol) (point-at-eol) 1 (point))
+      (as3-show-members-of (as3-class-named (match-string 1))))
 
-       ;; Variable name, dot accessed
-       ((flyparse-re-search-containing-point "\.\\([a-z_][A-Za-z_]*\\)[^_A-Za-z(]" (point-at-bol) (point-at-eol) 1 (point))
-	(as3-show-definitions-for (match-string 1) (as3-find-definitions-of 
-						    (match-string 1)
-						    t
-						    (as3-method-at-point (point))
-						    )))
+     ;; Property name, dot accessed
+     ((flyparse-re-search-containing-point "\\.\\([a-z_][A-Za-z0-9_]*\\)" (point-at-bol) (point-at-eol) 1 (point))
+      (as3-show-definitions-for (match-string 1) (as3-find-definitions-of 
+						  (match-string 1)
+						  t
+						  (as3-method-at-point (point))
+						  )))
       
-       ;; Variable name, with or without leading underscore
-       ((flyparse-re-search-containing-point "\\W\\([a-z_][A-Za-z_]*\\)[^_A-Za-z(]" (point-at-bol) (point-at-eol) 1 (point))
-	(as3-show-definitions-for (match-string 1) (as3-find-definitions-of 
-						    (match-string 1)
-						    nil
-						    (as3-method-at-point (point))
-						    )))
+     ;; Property name, with or without leading underscore
+     ((flyparse-re-search-containing-point "\\W\\([a-z_][A-Za-z0-9_]*\\)" (point-at-bol) (point-at-eol) 1 (point))
+      (as3-show-definitions-for (match-string 1) (as3-find-definitions-of 
+						  (match-string 1)
+						  nil
+						  (as3-method-at-point (point))
+						  )))
       
-       ;; Method invocation, pointer over the method name, target is 'this' (because there is leading whitespace)
-       ((flyparse-re-search-containing-point "\\s \\([a-z_][A-Za-z]+\\)(" (point-at-bol) (point-at-eol) 1 (point))
-	(as3-show-definitions-for (match-string 1) (as3-find-definitions-of 
-						    (match-string 1)
-						    nil
-						    (as3-method-at-point (point))
-						    )))
+     ;; Method invocation, pointer after the open parenthesis, target unknown
+     ((flyparse-re-search-containing-point "\\W\\([a-z_][A-Za-z0-9]+\\)(\\()?\\)" (point-at-bol) (point) 2 (point))
+      (let ((method-descriptions (as3-all-methods-named (match-string 1))))
+	(if method-descriptions
+	    (as3-show-quick-method-help (first (as3-all-methods-named (match-string 1)))))))
       
-       ;; Method invocation, pointer over the method name, target unknown
-       ((flyparse-re-search-containing-point "\\W\\([a-z_][A-Za-z]+\\)(" (point-at-bol) (point-at-eol) 1 (point))
-	(as3-show-definitions-for (match-string 1) (as3-find-definitions-of 
-						    (match-string 1)
-						    t
-						    (as3-method-at-point (point))
-						    )))
+     ;; Method invocation, pointer after the open parenthesis and some other crud, now positioned after a comma, target unknown
+     ((flyparse-re-search-containing-point "\\W\\([a-z_][A-Za-z0-9]+\\)(.*\,[ ]*\\()?\\)" (point-at-bol) (point) 2 (point))
+      (let ((method-descriptions (as3-all-methods-named (match-string 1))))
+	(if method-descriptions
+	    (as3-show-quick-method-help (first (as3-all-methods-named (match-string 1)))))))
       
-       ;; Method invocation, pointer after the open parenthesis, target unknown
-       ((flyparse-re-search-containing-point "\\W\\([a-z_][A-Za-z]+\\)(\\()?\\)" (point-at-bol) (point) 2 (point))
-	(let ((method-descriptions (as3-all-methods-named (match-string 1))))
-	  (if method-descriptions
-	      (as3-show-quick-method-help (first (as3-all-methods-named (match-string 1)))))))
-      
-       ;; Method invocation, pointer after the open parenthesis and some other crud, now positioned after a comma, target unknown
-       ((flyparse-re-search-containing-point "\\W\\([a-z_][A-Za-z]+\\)(.*\,[ ]*\\()?\\)" (point-at-bol) (point) 2 (point))
-	(let ((method-descriptions (as3-all-methods-named (match-string 1))))
-	  (if method-descriptions
-	      (as3-show-quick-method-help (first (as3-all-methods-named (match-string 1)))))))
-      
-       ;; Member access - target is a variable name
-       ((flyparse-re-search-containing-point "\\W\\([a-z_][A-Za-z_]*\\)\.\\(\\)" (point-at-bol) (point-at-eol) 2 (point))
-	(as3-show-members-of (as3-class-named (as3-var-type-at-point (match-string 1) (point)))))
+     ;; Member access - target is a variable name
+     ((flyparse-re-search-containing-point "\\W\\([a-z_][A-Za-z0-9_]*\\)\\.\\(\\)" (point-at-bol) (point-at-eol) 2 (point))
+      (as3-choose-member-of (as3-class-named (as3-var-type-at-point (match-string 1) (point)))))
 
-       (t (message "Couldn't find any relevant help."))
+     (t (message "Couldn't find any relevant help."))
       
-       )
-      )))
+     )
+    ))
 (define-key as3-mode-map (kbd "C-c h") 'as3-show-help-at-point)
 
 
