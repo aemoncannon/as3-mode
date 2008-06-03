@@ -233,6 +233,7 @@
     ("add-event-listener" . "as3-insert-event-listener")
     ("describe-class" . "as3-describe-class-by-name")
     ("jump-to-class" . "as3-jump-to-class-by-name")
+    ("override-method" . "as3-override-method-by-name")
     ))
 
 (defun as3-quick-menu ()
@@ -503,7 +504,7 @@
 	 (params (as3-method-parameters an-as3-method))
 	 (modifiers (as3-method-modifiers an-as3-method))
 	 )
-    (format "%s %s(%s):%s" 
+    (format "%s function %s(%s):%s" 
 	    (mapconcat 'identity modifiers " ") 
 	    name 
 	    (mapconcat (lambda (ea) (format "%s:%s" (as3-formal-parameter-name ea) (as3-formal-parameter-type ea))) params ", ")
@@ -915,6 +916,41 @@
       )))
 
 
+(defun as3-override-method-by-name ()
+  "Find a method by name, insert an override stub at point."
+  (interactive)
+  (let* ((start-point (point))
+	 (class (as3-current-class))
+	 (superclass (as3-super-class-for-class class))
+	 (methods (if superclass (as3-methods-of superclass) '()))
+	 (choices (mapcar (lambda (m)
+			    `(,(as3-method-name m) . ,m)
+			    ) methods)))
+    (if (not (null choices))
+	(let* ((key (ido-completing-read 
+		     "Select a method to override: "
+		     choices 
+		     nil t nil))
+	       (method (cdr (assoc key choices)))
+	       (name (as3-method-name method))
+	       (type (as3-method-return-type method))
+	       (params (as3-method-parameters method))
+	       (modifiers (as3-method-modifiers method)))
+	  (insert (format "override %s function %s(%s):%s{\n%ssuper.%s(%s);\n}" 
+			  (mapconcat 'identity modifiers " ") 
+			  name 
+			  (mapconcat (lambda (ea) (format "%s:%s" (as3-formal-parameter-name ea) (as3-formal-parameter-type ea))) params ", ")
+			  type
+			  (if (equal type "void") "" "return ")
+			  name
+			  (mapconcat (lambda (ea) (format "%s" (as3-formal-parameter-name ea))) params ", ")
+			  ))
+	  (indent-region start-point (point))
+	  ))
+    ))
+
+
+
 (defun as3-hoist-as-method (beg end)
   "Hoist a collection of statements into their own method."
   (interactive (list (mark) (point)))
@@ -932,7 +968,7 @@
 			   ) method-name content-string))
 	  (goto-char (flyparse-tree-beg-offset (first subtrees)))
 	  (flyparse-kill-region subtrees)
-	  (insert (format "%s();" method-name))
+	  (insert (format "%s();" method-name)) ;
 	  (indent-region (point-min) (point-max)))
       (message "Must select at least one statement within a method."))))
 
@@ -1234,7 +1270,7 @@
   (let* ((class an-as3-class)
 	 (methods (as3-methods-of class))
 	 (member-vars (as3-member-vars-of class))
-    	 (method-choices (mapcar (lambda (m) `(,(as3-method-name m) . ,m)) methods))
+	 (method-choices (mapcar (lambda (m) `(,(as3-method-name m) . ,m)) methods))
 	 (var-choices (mapcar (lambda (v) `(,(as3-member-var-name v) . ,v)) member-vars))
 	 (choices (append method-choices var-choices)))
     (if (not (null choices))
