@@ -26,28 +26,28 @@
 
 (eval-when-compile (require 'cl))
 
-(require 'project-helper)
-(require 'compile)
 (require 'fdb)
 (require 'flymake)
 (require 'flyparse-mode)
 (require 'font-lock)
-(require 'cc-mode)
-(require 'abbrev-extensions)
-(eval-when-compile (require 'regexp-opt))
-(add-to-list 'load-path "~/etc/emacs/site-lisp/yasnippet/")
 (require 'yasnippet)
+(require 'project-helper)
+(require 'ido)
 
 
-(defvar as3-build-and-run-command nil)
-(make-variable-buffer-local 'as3-build-and-run-command)
-
-(defvar as3-flymake-build-command nil)
-(make-variable-buffer-local 'as3-flymake-build-command)
 
 (defvar as3-flyparse-parse-cmd 
   '("java" "emacs.flyparse.as3.AS3Driver")
   "The shell command used to invoke the actionscript 3 parser.")
+
+(defvar as3-flymake-build-command nil
+  "The shell command used by flymake-mode to launch external syntax checker.")
+(make-variable-buffer-local 'as3-flymake-build-command)
+
+
+;;
+;; Some predefined flyparse queries, for conveniance.
+;;
 
 (defvar as3-flyparse-path-to-import-def
   '("COMPILATION_UNIT" "PACKAGE_DECL" "IMPORT_DEF"))
@@ -96,6 +96,8 @@
 
 (defvar as3-flyparse-path-to-variable-def-name
   (append as3-flyparse-path-to-variable-def '("VAR_DECLARATION" "NAME")))
+
+
 
 
 (defvar as3-mode-map
@@ -210,7 +212,9 @@
     ("Event.TAB_ENABLED_CHANGE" . ("Event" "TAB_ENABLED_CHANGE" "onTabEnabledChange"))
     ("Event.TAB_INDEX_CHANGE" . ("Event" "TAB_INDEX_CHANGE" "onTabIndexChange"))
     ("Event.UNLOAD" . ("Event" "UNLOAD" "onUnload"))
-    ))
+    )
+  "Information for common event types and their handlers."
+  )
 
 
 (defvar as3-command-library 
@@ -234,11 +238,15 @@
     ("describe-class" . "as3-describe-class-by-name")
     ("jump-to-class" . "as3-jump-to-class-by-name")
     ("override-method" . "as3-override-method-by-name")
-    ))
+    )
+  "Library of commands, accessible via as3-quick-menu."
+  )
+
 
 (defun as3-quick-menu ()
   (interactive)
   (run-command-by-bookmark as3-command-library))
+
 
 (define-derived-mode as3-mode fundamental-mode "as3-mode"
   "A major mode for editing Actionscript 3 files."
@@ -257,9 +265,7 @@
 
 
 
-;;;;;;;;;;;;;;;;;
-;; Indentation ;;
-;;;;;;;;;;;;;;;;;
+;; Indentation
 
 (defun as3-indent-line ()
   "Indent current line of As3 code."
@@ -318,10 +324,8 @@
       (- open-count close-count))))
 
 
-;;;;;;;;;;;;;;;;;;;;;
-;; Flymake for AS3 ;;
-;;;;;;;;;;;;;;;;;;;;;
 
+;; flymake-mode helpers
 
 (defun flymake-as3-init ()
   (if as3-flymake-build-command
@@ -349,9 +353,9 @@
 (push '("^\\(.*\\)(\\([0-9]+\\)): col: \\([0-9]+\\) Error: \\(.*\\)$" 1 2 3 2) compilation-error-regexp-alist)
 
 
-;;;;;;;;;;;;;;;;;;;
-;; AS3 utilities ;;
-;;;;;;;;;;;;;;;;;;;
+
+
+;; Define the structures and functionality for the AS3 Dom.
 
 (defstruct as3-node "An AS3 program node." (tree nil) (file-path ""))
 
@@ -727,7 +731,7 @@
 
 
 
-;;;; General utilities
+;; General utilities
 
 (defun as3-name-at-point (pos)
   (let ((var-name-tree (flyparse-containing-tree-of-type '("NAME"))))
@@ -825,11 +829,7 @@
 			  )))
 
 
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; AS3 Interactive Commands ;;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
+;; Interactive commands
 
 (defun as3-alphabetize-imports (pos)
   "Alphabetize the imports in this class."
@@ -1441,9 +1441,9 @@
       (message "Not in a class."))))
 
 
-;;;;;;;;;;;;;;
-;; snippets ;;
-;;;;;;;;;;;;;;
+
+
+;; Templates
 
 (yas/define 'as3-mode "fu" "function(${arg}){
     $0
@@ -1451,11 +1451,9 @@
 )
 
 
-;;;;;;;;;;;;;;;;;;;;;;
-;; Regression Tests ;;
-;;;;;;;;;;;;;;;;;;;;;;
 
 
+;; Regression tests
 
 (defun as3-mode-run-tests ()
   "Regression tests for as3-mode ."

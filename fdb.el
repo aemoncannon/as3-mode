@@ -1,8 +1,27 @@
-;;;;;;;;;;;;;;;;;;;
-;; fdb functions ;;
-;;;;;;;;;;;;;;;;;;;
+;;; fdb.el --- An extension to gud for debugging Actionscript 3
 
-(require 'aemon-utils)
+;; Copyright (C) 2007  Aemon Cannon
+
+;; Author: Aemon Cannon
+;; Keywords: language helpers
+
+;; This file is free software; you can redistribute it and/or modify
+;; it under the terms of the GNU General Public License as published by
+;; the Free Software Foundation; either version 2, or (at your option)
+;; any later version.
+
+;; This file is distributed in the hope that it will be useful,
+;; but WITHOUT ANY WARRANTY; without even the implied warranty of
+;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;; GNU General Public License for more details.
+
+;; You should have received a copy of the GNU General Public License
+;; along with GNU Emacs; see the file COPYING.  If not, write to
+;; the Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+;; Boston, MA 02111-1307, USA.
+
+(eval-when-compile (require 'cl))
+
 (require 'gud)
 
 ;; History of argument lists passed to fdb.
@@ -33,6 +52,9 @@
 	  "\\)*[^0-9]")
   "RE to recognize an entire breakpoint list.")
 
+(defun assocv (key list)
+  "Equivalent to (cdr (assoc ..."
+  (cdr (assoc key list)))
 
 (defun gud-overlay-p (ov)
   "Determine whether overlay OV was created by gud."
@@ -57,8 +79,8 @@
       )))
 
 (defun gud-point-in-gud-overlay (pos)
-  (list-any (lambda (ov) (gud-overlay-p ov))
-	    (overlays-at pos)))
+  (find-if (lambda (ov) (gud-overlay-p ov))
+	   (overlays-at pos)))
 
 (defun gud-region-has-gud-overlays (beg end)
   "Check if region specified by BEG and END has overlay.
@@ -138,11 +160,11 @@ Otherwise set a new breakpoint"
 buffer overlays"
   (interactive)
   (save-excursion
-    (list-each (lambda (ea) 
-		 (with-current-buffer (assocv 'file ea)
-		   (goto-line (assocv 'line-no ea))
-		   (gud-remove nil)))
-	       gud-fdb-breakpoint-descriptors)
+    (mapc (lambda (ea) 
+	    (with-current-buffer (assocv 'file ea)
+	      (goto-line (assocv 'line-no ea))
+	      (gud-remove nil)))
+	  gud-fdb-breakpoint-descriptors)
     (gud-fdb-refresh-breakpoint-overlays)))
 
 
@@ -170,10 +192,10 @@ buffer overlays"
 (defun gud-fdb-remove-all-breakpoint-highlights ()
   "Remove buffer overlays for breakpoints."
   (interactive)
-  (list-each (lambda (ea) 
-	       (if (overlayp (assocv 'overlay ea))
-		   (delete-overlay (assocv 'overlay ea))))
-	     gud-fdb-breakpoint-descriptors)
+  (mapc (lambda (ea) 
+	  (if (overlayp (assocv 'overlay ea))
+	      (delete-overlay (assocv 'overlay ea))))
+	gud-fdb-breakpoint-descriptors)
   (setq gud-fdb-breakpoint-descriptors '()))
 
 
