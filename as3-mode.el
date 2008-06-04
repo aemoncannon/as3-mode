@@ -264,7 +264,6 @@
   )
 
 
-
 ;; Indentation
 
 (defun as3-indent-line ()
@@ -327,7 +326,7 @@
 
 ;; flymake-mode helpers
 
-(defun flymake-as3-init ()
+(defun as3-flymake-init ()
   (if as3-flymake-build-command
       (progn
 	(remove-hook 'after-save-hook 'flymake-after-save-hook t)
@@ -335,14 +334,14 @@
 	(add-hook 'after-save-hook 'flymake-after-save-hook nil t)
 	as3-flymake-build-command)))
 
-(defun flymake-as3-cleanup () ())
-(defun flymake-as3-get-real-file-name (tmp-file) tmp-file)
+(defun as3-flymake-cleanup () ())
+(defun as3-flymake-get-real-file-name (tmp-file) tmp-file)
 
 (setq flymake-allowed-file-name-masks
       (cons '(".+\\.as$\\|.+\\.mxml$"
-	      flymake-as3-init
-	      flymake-as3-cleanup
-	      flymake-as3-get-real-file-name)
+	      as3-flymake-init
+	      as3-flymake-cleanup
+	      as3-flymake-get-real-file-name)
 	    flymake-allowed-file-name-masks))
 
 (setq flymake-err-line-patterns
@@ -635,7 +634,7 @@
 	    (replace-regexp-in-string "_" "" name) type name)))
 
 (defun as3-pretty-member-var-desc (an-as3-member-var)
-  "Return the a pretty stringified description of member-var."
+  "Return a pretty stringified description of member-var."
   (let* ((name (as3-member-var-name an-as3-member-var))
 	 (type (as3-member-var-type an-as3-member-var))
 	 (modifiers (as3-member-var-modifiers an-as3-member-var))
