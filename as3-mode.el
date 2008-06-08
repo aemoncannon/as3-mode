@@ -1378,7 +1378,9 @@
 
 
 (defun as3-show-help-at-point (pos)
-  "Display contextual help for thing at point."
+  "Display contextual help for thing at point. This function uses regular expressions to infer the
+   syntactic context at or near the current point -- we don't use flyparse because the current expression may be 
+   incomplete. "
   (interactive (list (point)))
   (let ((start-point (point))
 	(case-fold-search nil)) ;; Enable case sensitive searching.
