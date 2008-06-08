@@ -55,11 +55,14 @@
 (defvar as3-flyparse-path-to-class-def
   '("COMPILATION_UNIT" "PACKAGE_DECL" "CLASS_DEF"))
 
-(defvar as3-flyparse-path-to-class-ident
-  (append as3-flyparse-path-to-class-def '("CLASS_NAME" "NAME")))
+(defvar as3-flyparse-path-to-interface-def
+  '("COMPILATION_UNIT" "PACKAGE_DECL" "INTERFACE_DEF"))
 
 (defvar as3-flyparse-path-to-class-name
-  (append as3-flyparse-path-to-class-ident '(*)))
+  (append as3-flyparse-path-to-class-def '("CLASS_NAME" "NAME" *)))
+
+(defvar as3-flyparse-path-to-interface-name
+  (append as3-flyparse-path-to-interface-def '("NAME" *)))
 
 (defvar as3-flyparse-path-to-extends-clause
   (append as3-flyparse-path-to-class-def '("EXTENDS_CLAUSE")))
@@ -356,6 +359,7 @@
 
 ;; Define the structures and functionality for the AS3 Dom.
 
+
 (defstruct as3-node "An AS3 program node." (tree nil) (file-path ""))
 
 (defun as3-class-for-node (an-as3-node) 
@@ -364,13 +368,41 @@
    :tree (flyparse-get-cached-tree (as3-node-file-path an-as3-node)) 
    :file-path (as3-node-file-path an-as3-node)))
 
-(defun as3-pretty-node-desc (an-as3-node) 
+(defun as3-pretty-print-node (an-as3-node) 
   "Return a pretty string description of an-as3-node."
-  (cond ((as3-method-p an-as3-node) (as3-pretty-method-desc an-as3-node))
-	((as3-member-var-p an-as3-node) (as3-pretty-member-var-desc an-as3-node))
-	((as3-var-declaration-p an-as3-node) (as3-pretty-var-declaration-desc an-as3-node))
-	((as3-formal-parameter-p an-as3-node) (as3-pretty-formal-parameter-desc an-as3-node))
+  (cond ((as3-method-p an-as3-node) (as3-pretty-print-method an-as3-node))
+	((as3-member-var-p an-as3-node) (as3-pretty-print-member-var an-as3-node))
+	((as3-var-declaration-p an-as3-node) (as3-pretty-print-var-declaration an-as3-node))
+	((as3-formal-parameter-p an-as3-node) (as3-pretty-print-formal-parameter an-as3-node))
 	(t "An as3 node.")))
+
+
+(defstruct (as3-interface (:include as3-node)) "An AS3 interface." )
+
+(defun as3-interface-named (name)
+  "Return the interface with the given name."
+  (catch 'return-now 
+    (flyparse-for-each-cached-tree
+     (lambda (path tree)
+       (let ((name-tree (flyparse-query-first 
+			 as3-flyparse-path-to-interface-name tree)))
+	 (if name-tree
+	     (let ((interface-name (flyparse-tree-as-text name-tree)))
+	       (if (equal interface-name name)
+		   (throw 'return-now 
+			  (make-as3-interface :tree tree :file-path path))))
+	   ))
+       ))
+    ))
+
+(defun as3-interface-name (an-as3-interface) 
+  "Return the name of the given interface."
+  (let* ((tree (as3-interface-tree an-as3-interface))
+	 (name-tree (flyparse-query-first as3-flyparse-path-to-interface-name tree)))
+    (if name-tree
+	(flyparse-tree-as-text name-tree))))
+
+
 
 (defstruct (as3-class (:include as3-node)) "An AS3 class." )
 
@@ -385,7 +417,7 @@
 
 
 (defun as3-class-named (name)
-  "Return the class corresponding with the given name."
+  "Return the class with the given name."
   (catch 'return-now 
     (flyparse-for-each-cached-tree
      (lambda (path tree)
@@ -408,9 +440,9 @@
 (defun as3-class-name (an-as3-class) 
   "Return the name of the given class."
   (let* ((class-tree (as3-class-tree an-as3-class))
-	 (class-ident (flyparse-query-first as3-flyparse-path-to-class-ident class-tree)))
-    (if class-ident
-	(flyparse-tree-as-text class-ident))))
+	 (class-name-tree (flyparse-query-first as3-flyparse-path-to-class-name class-tree)))
+    (if class-name-tree
+	(flyparse-tree-as-text class-name-tree))))
 
 (defun as3-current-class-name ()
   "Return the name of the current class in the active buffer."
@@ -500,7 +532,7 @@
 	  (flyparse-query-all '("METHOD_DEF" "PARAMS" "PARAM" "TYPE_SPEC" "TYPE") (as3-method-tree an-as3-method))))
 
 
-(defun as3-pretty-method-desc (an-as3-method)
+(defun as3-pretty-print-method (an-as3-method)
   "Return the a pretty stringified description of method."
   (let* ((name (as3-method-name an-as3-method))
 	 (type (as3-method-return-type an-as3-method))
@@ -633,7 +665,7 @@
     (format "public function set %s(val:%s):void { %s = val }"
 	    (replace-regexp-in-string "_" "" name) type name)))
 
-(defun as3-pretty-member-var-desc (an-as3-member-var)
+(defun as3-pretty-print-member-var (an-as3-member-var)
   "Return a pretty stringified description of member-var."
   (let* ((name (as3-member-var-name an-as3-member-var))
 	 (type (as3-member-var-type an-as3-member-var))
@@ -680,7 +712,7 @@
 	(flyparse-tree-as-text name-tree))))
 
 
-(defun as3-pretty-var-declaration-desc (an-as3-var-declaration)
+(defun as3-pretty-print-var-declaration (an-as3-var-declaration)
   "Return the a pretty stringified description of member-var."
   (let* ((name (as3-var-declaration-name an-as3-var-declaration))
 	 (type (as3-var-declaration-type an-as3-var-declaration))
@@ -720,7 +752,7 @@
 	(flyparse-tree-as-text name-tree))))
 
 
-(defun as3-pretty-formal-parameter-desc (an-as3-formal-parameter)
+(defun as3-pretty-print-formal-parameter (an-as3-formal-parameter)
   "Return the a pretty stringified description of member-var."
   (let* ((name (as3-formal-parameter-name an-as3-formal-parameter))
 	 (type (as3-formal-parameter-type an-as3-formal-parameter))
@@ -1171,7 +1203,7 @@
 	   (lambda (ea)
 	     (insert (format "%s#       %s"
 			     (as3-class-name (as3-class-for-node ea))
-			     (as3-pretty-method-desc ea)))
+			     (as3-pretty-print-method ea)))
 	     (make-button (point-at-bol) (point-at-eol)
 			  'face font-lock-constant-face
 			  'action `(lambda (x)
@@ -1189,7 +1221,7 @@
 
 (defun as3-show-quick-method-help (an-as3-method)
   "Show the signature for given method in the mini-buffer"
-  (message (format "%s" (as3-pretty-method-desc an-as3-method))))
+  (message (format "%s" (as3-pretty-print-method an-as3-method))))
 
 
 (defun as3-show-definitions-for (name defs)
@@ -1201,7 +1233,7 @@
 	 (buffer-name "*AS3 Inspecting Name*")
 	 (describe-func
 	  (lambda (ea)
-	    (insert (format "%s#  %s" (as3-class-name (as3-class-for-node ea)) (as3-pretty-node-desc ea)))
+	    (insert (format "%s#  %s" (as3-class-name (as3-class-for-node ea)) (as3-pretty-print-node ea)))
 	    (as3-make-code-link (point-at-bol) (point-at-eol) 
 				(as3-node-file-path ea) 
 				(flyparse-tree-beg-offset (as3-node-tree ea)))
@@ -1254,7 +1286,7 @@
     (let* ((methods (as3-methods-of class)))
       (mapc
        (lambda (ea)
-	 (insert (format "%s#  %s" (as3-class-name (as3-method-class ea)) (as3-pretty-method-desc ea)))
+	 (insert (format "%s#  %s" (as3-class-name (as3-method-class ea)) (as3-pretty-print-method ea)))
 	 (as3-make-code-link (point-at-bol) (point-at-eol) (as3-method-file-path ea) (flyparse-tree-beg-offset (as3-method-tree ea)))
 	 (insert "\n"))
        methods))
@@ -1441,8 +1473,6 @@
 
 
 
-
-;; Templates
 
 (yas/define 'as3-mode "fu" "function(${arg}){
     $0
@@ -1676,6 +1706,27 @@
     (let* ((class (apply make-class-fixture '("package aemon{class DudeFace{public function runHorse(dude:Monk){ trace(friend) }}}")))
 	   (methods (as3-methods-of class)))
       (assert (equal 1 (length methods))))
+
+    ;; Test as3-class-named
+    (let ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function runHorse(dude:Dude, cat:Cat):void{touch()}}}")))
+      (flyparse-with-temp-cached-trees (("/tmp/Dude.as" tree))
+				       (let ((class (as3-class-named "Dude")))
+					 (assert (equal "Dude" (as3-class-name class))))))
+
+
+    ;; Test as3-super-class-for-class
+    (let ((class-tree (flyparse-tree-for-string cmd "package aemon{class Dude extends Dad{}}"))
+	  (super-class-tree (flyparse-tree-for-string cmd "package aemon{class Dad{public function runHorse(dude:Dude, cat:Cat):void{touch()}}}")))
+      (flyparse-with-temp-cached-trees (("/tmp/Dude.as" class-tree) ("/tmp/Dad.as" super-class-tree))
+				       (let ((class (as3-class-named "Dude")))
+					 (assert (equal "Dude" (as3-class-name class))))))
+
+
+    ;; Test as3-interface-named
+    (let ((tree (flyparse-tree-for-string cmd "package aemon{interface IDude{function runHorse(dude:Dude, cat:Cat):void;}}")))
+      (flyparse-with-temp-cached-trees (("/tmp/IDude.as" tree))
+				       (let ((interface (as3-interface-named "IDude")))
+					 (assert (equal "IDude" (as3-interface-name interface))))))
        
        
     (message "All tests passed :)")
