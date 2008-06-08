@@ -94,6 +94,12 @@
 (defvar as3-flyparse-path-to-method-def-block
   (append as3-flyparse-path-to-method-def '("BLOCK")))
 
+(defvar as3-flyparse-path-to-interface-member
+  (append as3-flyparse-path-to-interface-def '("TYPE_BLOCK") '("CLASS_MEMBER")))
+
+(defvar as3-flyparse-path-to-interface-method-def
+  (append as3-flyparse-path-to-interface-member '("METHOD_DEF")))
+
 (defvar as3-flyparse-path-to-variable-def
   (append as3-flyparse-path-to-class-member '("VARIABLE_DEF")))
 
@@ -377,6 +383,8 @@
 	(t "An as3 node.")))
 
 
+
+
 (defstruct (as3-interface (:include as3-node)) "An AS3 interface." )
 
 (defun as3-interface-named (name)
@@ -401,6 +409,21 @@
 	 (name-tree (flyparse-query-first as3-flyparse-path-to-interface-name tree)))
     (if name-tree
 	(flyparse-tree-as-text name-tree))))
+
+
+(defun as3-interface-instance-methods (an-as3-interface)
+  "Get all instance methods of an-as3-interface."
+  (let ((interface-tree (as3-interface-tree an-as3-interface)))
+    (mapcar
+     (lambda (tree)
+       (make-as3-method
+	:tree tree 
+	:file-path (as3-interface-file-path an-as3-interface)))
+     (flyparse-query-all 
+      as3-flyparse-path-to-interface-method-def 
+      interface-tree))
+    ))
+
 
 
 
@@ -487,11 +510,7 @@
       (list an-as3-class))))
 
 
-
-
-(defstruct (as3-method (:include as3-node)) "An AS3 instance method." )
-
-(defun as3-methods-of (an-as3-class)
+(defun as3-class-instance-methods (an-as3-class)
   "Get all instance methods of an-as3-class."
   (let ((class-chain (as3-class-chain-starting-at an-as3-class)))
     (apply 'append (mapcar (lambda (class)
@@ -506,6 +525,12 @@
 				 class-tree))
 			       ))
 			   class-chain))))
+
+
+
+
+(defstruct (as3-method (:include as3-node)) "An AS3 instance method." )
+
 
 (defun as3-method-name (an-as3-method)
   (flyparse-tree-as-text (flyparse-query-first '("METHOD_DEF" "METHOD_NAME" "NAME") (as3-method-tree an-as3-method))))
@@ -953,7 +978,7 @@
   (let* ((start-point (point))
 	 (class (as3-current-class))
 	 (superclass (as3-super-class-for-class class))
-	 (methods (if superclass (as3-methods-of superclass) '()))
+	 (methods (if superclass (as3-class-instance-methods superclass) '()))
 	 (choices (mapcar (lambda (m)
 			    `(,(as3-method-name m) . ,m)
 			    ) methods)))
@@ -1283,7 +1308,7 @@
 	(kill-buffer buffer-name))
     (switch-to-buffer-other-window buffer-name)
     (insert (format "Members of class '%s':\n----------------------------\n" name))
-    (let* ((methods (as3-methods-of class)))
+    (let* ((methods (as3-class-instance-methods class)))
       (mapc
        (lambda (ea)
 	 (insert (format "%s#  %s" (as3-class-name (as3-method-class ea)) (as3-pretty-print-method ea)))
@@ -1299,7 +1324,7 @@
 (defun as3-choose-member-of (an-as3-class)
   "Give the user a list of member names to select from."
   (let* ((class an-as3-class)
-	 (methods (as3-methods-of class))
+	 (methods (as3-class-instance-methods class))
 	 (member-vars (as3-member-vars-of class))
 	 (method-choices (mapcar (lambda (m) `(,(as3-method-name m) . ,m)) methods))
 	 (var-choices (mapcar (lambda (v) `(,(as3-member-var-name v) . ,v)) member-vars))
@@ -1704,9 +1729,9 @@
       (assert (equal "Friend" type)))
 
 
-    ;; Test as3-methods-of
+    ;; Test as3-class-instance-methods
     (let* ((class (apply make-class-fixture '("package aemon{class DudeFace{public function runHorse(dude:Monk){ trace(friend) }}}")))
-	   (methods (as3-methods-of class)))
+	   (methods (as3-class-instance-methods class)))
       (assert (equal 1 (length methods))))
 
     ;; Test as3-class-named
@@ -1729,6 +1754,14 @@
       (flyparse-with-temp-cached-trees (("/tmp/IDude.as" tree))
 				       (let ((interface (as3-interface-named "IDude")))
 					 (assert (equal "IDude" (as3-interface-name interface))))))
+
+
+    ;; Test as3-interface-instance-methods
+    (let* ((tree (flyparse-tree-for-string cmd "package aemon{interface IDude{function runHorse(dude:Dude, cat:Cat):void;}}"))
+	   (interface (make-as3-interface :tree tree))
+	   (methods (as3-interface-instance-methods interface)))
+      (assert (equal 1 (length methods)))
+      (assert (equal "runHorse" (as3-method-name (first methods)))))
        
        
     (message "All tests passed :)")
