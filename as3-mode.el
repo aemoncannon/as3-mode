@@ -717,7 +717,7 @@
 	 (type (as3-member-var-type an-as3-member-var))
 	 (modifiers (as3-member-var-modifiers an-as3-member-var))
 	 )
-    (format "%s %s:%s" 
+    (format "%s var %s:%s" 
 	    (mapconcat 'identity modifiers " ") 
 	    name 
 	    type
@@ -1013,7 +1013,7 @@
 	       (name (as3-method-name method))
 	       (type (as3-method-return-type method))
 	       (params (as3-method-parameters method))
-	       (modifiers (or (as3-method-modifiers method) "public")))
+	       (modifiers (or (as3-method-modifiers method) '("public"))))
 	  (insert (format "override %s function %s%s(%s):%s{\n%ssuper.%s(%s);\n}" 
 			  (mapconcat 'identity modifiers " ") 
 			  (if accessor-role (format "%s " accessor-role) "")
@@ -1407,8 +1407,10 @@
 	  (if (as3-method-p node)
 	      (progn
 		(insert key)
-		(insert "(")
-		(as3-show-quick-method-help node)
+		(if (not (as3-method-accessor-role node))
+		    (progn
+		      (insert "(")
+		      (as3-show-quick-method-help node)))
 		))
 	  (if (as3-member-var-p node)
 	      (insert key)
