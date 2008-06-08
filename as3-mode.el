@@ -67,6 +67,9 @@
 (defvar as3-flyparse-path-to-extends-clause
   (append as3-flyparse-path-to-class-def '("EXTENDS_CLAUSE")))
 
+(defvar as3-flyparse-path-to-implements-clause
+  (append as3-flyparse-path-to-class-def '("IMPLEMENTS_CLAUSE")))
+
 (defvar as3-flyparse-path-to-extends-name
   (append as3-flyparse-path-to-extends-clause '("NAME" *)))
 
@@ -247,6 +250,7 @@
     ("describe-class" . "as3-describe-class-by-name")
     ("jump-to-class" . "as3-jump-to-class-by-name")
     ("override-method" . "as3-override-method-by-name")
+    ("implement-interface-method" . "as3-implement-interface-method")
     )
   "Library of commands, accessible via as3-quick-menu."
   )
@@ -526,6 +530,18 @@
 			       ))
 			   class-chain))))
 
+(defun as3-class-implemented-interface-names (an-as3-class)
+  "Returns the names of all implemented interfaces for an-as3-class."
+  (let ((implements-clause-tree 
+	 (flyparse-query-first 
+	  as3-flyparse-path-to-implements-clause 
+	  (as3-class-tree an-as3-class))))
+    (if implements-clause-tree
+	(mapcar (lambda (ea)
+		  (flyparse-tree-as-text ea)) 
+		(flyparse-query-all '("IMPLEMENTS_CLAUSE" "NAME") implements-clause-tree))
+      )))
+
 
 
 
@@ -543,6 +559,11 @@
     (if (null type-tree)
 	"void"
       (flyparse-tree-as-text type-tree))))
+
+(defun as3-method-accessor-role (an-as3-method)
+  (let ((role-tree (flyparse-query-first '("METHOD_DEF" "ACCESSOR_ROLE") (as3-method-tree an-as3-method))))
+    (if role-tree
+	(flyparse-tree-as-text role-tree))))
 
 (defun as3-method-modifiers (an-as3-method)
   (mapcar (lambda (ea) (flyparse-tree-as-text ea))
@@ -988,12 +1009,14 @@
 		     choices 
 		     nil t nil))
 	       (method (cdr (assoc key choices)))
+	       (accessor-role (as3-method-accessor-role method))
 	       (name (as3-method-name method))
 	       (type (as3-method-return-type method))
 	       (params (as3-method-parameters method))
 	       (modifiers (as3-method-modifiers method)))
-	  (insert (format "override %s function %s(%s):%s{\n%ssuper.%s(%s);\n}" 
+	  (insert (format "override %s function %s%s(%s):%s{\n%ssuper.%s(%s);\n}" 
 			  (mapconcat 'identity modifiers " ") 
+			  (if accessor-role (format "%s " accessor-role) "")
 			  name 
 			  (mapconcat (lambda (ea) (format "%s:%s" (as3-formal-parameter-name ea) (as3-formal-parameter-type ea))) params ", ")
 			  type
@@ -1006,6 +1029,52 @@
     ))
 
 
+(defun as3-implement-interface-method ()
+  "Find an implemented interface by name, then find one of its methods by name, 
+   finally insert a method stub at point."
+  (interactive)
+  (let* ((start-point (point))
+	 (class (as3-current-class))
+	 (choices (mapcar (lambda (name)
+			    `(,name . ,name)
+			    ) (as3-class-implemented-interface-names class))))
+    (if (not (null choices))
+	(let* ((key (ido-completing-read 
+		     "Select an implemented interface: "
+		     choices 
+		     nil t nil))
+	       (interface-name (cdr (assoc key choices)))
+	       (interface (as3-interface-named interface-name)))
+	  (if interface
+	      (let* ((methods (as3-interface-instance-methods interface))
+		     (choices (mapcar (lambda (m)
+					`(,(as3-method-name m) . ,m)
+					) methods)))
+		(if (not (null choices))
+		    (let* ((key (ido-completing-read 
+				 "Select a method to implement: "
+				 choices 
+				 nil t nil))
+			   (method (cdr (assoc key choices)))
+			   (accessor-role (as3-method-accessor-role method))
+			   (name (as3-method-name method))
+			   (type (as3-method-return-type method))
+			   (params (as3-method-parameters method)))
+		      (insert (format "public function %s%s(%s):%s{\n%s\n}" 
+				      (if accessor-role (format "%s " accessor-role) "")
+				      name 
+				      (mapconcat (lambda (ea) (format "%s:%s" (as3-formal-parameter-name ea) (as3-formal-parameter-type ea))) params ", ")
+				      type
+				      (if (equal type "void") "" "return null;")
+				      ))
+		      (indent-region start-point (point)))
+		  (message "Sorry, no methods found.")
+		  ))
+	    (message "Sorry could not locate %s." interface-name)
+	    ))
+      (message "Sorry, this class does not implement any interfaces."))))
+  
+	       
 
 (defun as3-hoist-as-method (beg end)
   "Hoist a collection of statements into their own method."
@@ -1762,7 +1831,19 @@
 	   (methods (as3-interface-instance-methods interface)))
       (assert (equal 1 (length methods)))
       (assert (equal "runHorse" (as3-method-name (first methods)))))
+
+
+    ;; Test as3-class-implemented-interface-names
+    (let* ((class (apply make-class-fixture '("package aemon{class DudeFace implements Horse, Coward{public function runHorse(dude:Monk){ trace(friend) }}}")))
+	   (names (as3-class-implemented-interface-names class)))
+      (assert (equal '("Horse" "Coward") names)))
        
+
+    ;; Test as3-method-accessor-role
+    (let* ((class (apply make-class-fixture '("package aemon{class Dude{public function get runHorse(dude:Monk, horse:Horse){ return 1;}}}")))
+	   (meth (as3-method-named class "runHorse")))
+      (assert (as3-method-p meth))
+      (assert (equal "get" (as3-method-accessor-role meth))))
        
     (message "All tests passed :)")
     ))
