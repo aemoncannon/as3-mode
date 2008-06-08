@@ -1816,8 +1816,9 @@
     (let ((class-tree (flyparse-tree-for-string cmd "package aemon{class Dude extends Dad{}}"))
 	  (super-class-tree (flyparse-tree-for-string cmd "package aemon{class Dad{public function runHorse(dude:Dude, cat:Cat):void{touch()}}}")))
       (flyparse-with-temp-cached-trees (("/tmp/Dude.as" class-tree) ("/tmp/Dad.as" super-class-tree))
-				       (let ((class (as3-class-named "Dude")))
-					 (assert (equal "Dude" (as3-class-name class))))))
+				       (let* ((class (as3-class-named "Dude"))
+					     (super (as3-super-class-for-class class)))
+					 (assert (equal "Dad" (as3-class-name super))))))
 
 
     ;; Test as3-interface-named
