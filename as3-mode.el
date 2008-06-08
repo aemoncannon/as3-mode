@@ -1013,7 +1013,7 @@
 	       (name (as3-method-name method))
 	       (type (as3-method-return-type method))
 	       (params (as3-method-parameters method))
-	       (modifiers (as3-method-modifiers method)))
+	       (modifiers (or (as3-method-modifiers method) "public")))
 	  (insert (format "override %s function %s%s(%s):%s{\n%ssuper.%s(%s);\n}" 
 			  (mapconcat 'identity modifiers " ") 
 			  (if accessor-role (format "%s " accessor-role) "")
