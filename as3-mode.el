@@ -31,19 +31,17 @@
 (require 'flyparse-mode)
 (require 'font-lock)
 (require 'yasnippet)
-(require 'project-helper)
 (require 'ido)
 
 
 
 (defvar as3-flyparse-parse-cmd 
-  '("java" "emacs.flyparse.as3.AS3Driver")
+  '("java" "emacs.flyparse.as3.AS3Driver" "-f")
   "The shell command used to invoke the actionscript 3 parser.")
 
 (defvar as3-flymake-build-command nil
   "The shell command used by flymake-mode to launch external syntax checker.")
 (make-variable-buffer-local 'as3-flymake-build-command)
-
 
 ;;
 ;; Some predefined flyparse queries, for conveniance.
@@ -270,7 +268,7 @@
   (setq tab-width 4)
   (setq flyparse-parse-cmd as3-flyparse-parse-cmd)
   (flyparse-mode-on)
-  (project-helper-load)
+  (as3-project-helper-load)
   (flymake-mode-on)
   (yas/initialize)
   (run-hooks 'as3-mode-hook)
@@ -584,9 +582,11 @@
 	 (type (as3-method-return-type an-as3-method))
 	 (params (as3-method-parameters an-as3-method))
 	 (modifiers (as3-method-modifiers an-as3-method))
+	 (accessor-role (as3-method-accessor-role an-as3-method))
 	 )
-    (format "%s function %s(%s):%s" 
+    (format "%s function %s%s(%s):%s" 
 	    (mapconcat 'identity modifiers " ") 
+	    (if accessor-role (format "%s " accessor-role) "")
 	    name 
 	    (mapconcat (lambda (ea) (format "%s:%s" (as3-formal-parameter-name ea) (as3-formal-parameter-type ea))) params ", ")
 	    type
@@ -1578,278 +1578,331 @@
 )
 
 
+;; Definitions to support as3 projects
+;; 
+
+(defvar as3-project-helper-default-file-name ".as3-mode-project.el"
+  "The default project name to search for.")
+
+(defvar as3-project-helper-project-file-path nil
+  "Buffer local variable for storing the project file path.
+   This variable will be set automatically")
+(make-variable-buffer-local 'as3-project-helper-project-file-path)
+
+(defvar as3-project-helper-project-root-dir nil
+  "Buffer local variable for storing the project's root directory.
+   This variable will be set automatically.")
+(make-variable-buffer-local 'as3-project-helper-project-root-dir)
+
+(defvar as3-project-source-paths '()
+  "A list of directories containing .as source files for this project.")
+(make-variable-buffer-local 'as3-project-source-paths)
+
+(defun as3-project-helper-find-project-file-in-containing-directory (file-name)
+  "Starting at the directory containgining file-name, 
+   search up the directory tree for a suitable project descriptor to load, return it's path."
+  (let* ((dir (file-name-directory file-name))
+	 (possible-path (concat dir as3-project-helper-default-file-name)))
+    (if (file-directory-p dir)
+	(if (file-exists-p possible-path)
+	    possible-path
+	  (if (not (equal dir (directory-file-name dir)))
+	      (as3-project-helper-find-project-file-in-containing-directory (directory-file-name dir)))))))
+
+(defun as3-project-helper-load ()
+  "Search up the directory tree for a suitable project descriptor to load for the current buffer."
+  (interactive)
+  (let ((project-file-path 
+	 (as3-project-helper-find-project-file-in-containing-directory buffer-file-name)))
+    (if project-file-path
+	(progn
+	  (setq as3-project-helper-project-file-path project-file-path)
+	  (setq as3-project-helper-project-root-dir (file-name-directory project-file-path))
+	  (load project-file-path))
+      (message "Sorry, could not find an as3 project file for this buffer."))))
+
+
+(defun as3-project-reparse-all ()
+  "For each path listed in as3-project-source-paths, parse all .as into the flyparse cache."
+  (interactive)
+  (mapc
+   (lambda (path)
+     (flyparse-cache-all
+      (expand-file-name path) 
+      "\\.as"  as3-flyparse-parse-cmd))
+   as3-project-source-paths))
 
 
 ;; Regression tests
 
 (defun as3-mode-run-tests ()
-  "Regression tests for as3-mode ."
-  (interactive)
-  (let* ((cmd as3-flyparse-parse-cmd)
-	 (make-class-fixture (lambda (str)
-			       (make-as3-class
-				:tree (flyparse-tree-for-string cmd str)
-				:file-path ""
-				))))
+"Regression tests for as3-mode ."
+(interactive)
+(let* ((cmd as3-flyparse-parse-cmd)
+       (make-class-fixture (lambda (str)
+			     (make-as3-class
+			      :tree (flyparse-tree-for-string cmd str)
+			      :file-path ""
+			      ))))
        
-    ;; Simple queries on imports
-    (let* ((tree (flyparse-tree-for-string cmd "package aemon{ import com.aemon; import dog; import horse.*; public class Dude{}}")))
-      (assert (= 3 
-		 (length (flyparse-query-all as3-flyparse-path-to-import-def tree)))))
+  ;; Simple queries on imports
+  (let* ((tree (flyparse-tree-for-string cmd "package aemon{ import com.aemon; import dog; import horse.*; public class Dude{}}")))
+    (assert (= 3 
+	       (length (flyparse-query-all as3-flyparse-path-to-import-def tree)))))
        
-    ;; Simple queries on a class
-    (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{}}")))
-      (assert (= 1 
-		 (length (flyparse-query-all as3-flyparse-path-to-class-def tree))))
-      (assert (equal
-	       "Dude"
-	       (flyparse-tree-type (flyparse-query-first as3-flyparse-path-to-class-name tree)))))
+  ;; Simple queries on a class
+  (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{}}")))
+    (assert (= 1 
+	       (length (flyparse-query-all as3-flyparse-path-to-class-def tree))))
+    (assert (equal
+	     "Dude"
+	     (flyparse-tree-type (flyparse-query-first as3-flyparse-path-to-class-name tree)))))
        
-    ;; Simple queries on a class's extends clause
-    (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude extends Man{}}")))
-      (assert (equal "EXTENDS_CLAUSE" 
-		     (flyparse-tree-type (flyparse-query-first as3-flyparse-path-to-extends-clause tree))))
-      (assert (equal "Man" 
-		     (flyparse-tree-type (flyparse-query-first as3-flyparse-path-to-extends-name tree)))))
+  ;; Simple queries on a class's extends clause
+  (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude extends Man{}}")))
+    (assert (equal "EXTENDS_CLAUSE" 
+		   (flyparse-tree-type (flyparse-query-first as3-flyparse-path-to-extends-clause tree))))
+    (assert (equal "Man" 
+		   (flyparse-tree-type (flyparse-query-first as3-flyparse-path-to-extends-name tree)))))
        
-    ;; Query for different types of for loop
-    (let* ((tree (flyparse-tree-for-string cmd (concat "package aemon{class Dude{"
-						       "public function Dude(){"
-						       "   for(var name in hash){trace(name)}"
-						       "   for(var i:Number = 0; i < 20; i++){trace(i);}"
-						       "   for each(var ea:Thing in myThings){trace(ea);}"
-						       "}"
-						       "}}"))))
-      (assert (= 1 (length
-		    (flyparse-query-all (append as3-flyparse-path-to-method-def-block '("FOR_LOOP")) tree))))
-      (assert (= 1 (length
-		    (flyparse-query-all (append as3-flyparse-path-to-method-def-block '("FOR_IN_LOOP")) tree))))
-      (assert (= 1 (length
-		    (flyparse-query-all (append as3-flyparse-path-to-method-def-block '("FOR_EACH_LOOP")) tree)))))
+  ;; Query for different types of for loop
+  (let* ((tree (flyparse-tree-for-string cmd (concat "package aemon{class Dude{"
+						     "public function Dude(){"
+						     "   for(var name in hash){trace(name)}"
+						     "   for(var i:Number = 0; i < 20; i++){trace(i);}"
+						     "   for each(var ea:Thing in myThings){trace(ea);}"
+						     "}"
+						     "}}"))))
+    (assert (= 1 (length
+		  (flyparse-query-all (append as3-flyparse-path-to-method-def-block '("FOR_LOOP")) tree))))
+    (assert (= 1 (length
+		  (flyparse-query-all (append as3-flyparse-path-to-method-def-block '("FOR_IN_LOOP")) tree))))
+    (assert (= 1 (length
+		  (flyparse-query-all (append as3-flyparse-path-to-method-def-block '("FOR_EACH_LOOP")) tree)))))
        
-    ;; Simple queries on friend class
-    (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{}} class Dudette{private var monkey:Number;}")))
-      (assert (equal "CLASS_DEF"
-		     (flyparse-tree-type (flyparse-directed-search '("CLASS_DEF") 45 tree))))
-      (assert (equal "VARIABLE_DEF"
-		     (flyparse-tree-type (flyparse-directed-search '("VARIABLE_DEF") 45 tree)))))
-       
-       
-    ;; Query for constant variable def in a friend class and it's value
-    (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{}} class Dudette{public static const monkey:Number = 20;}")))
-      (assert (equal "VARIABLE_DEF"
-		     (flyparse-tree-type (flyparse-directed-search '("VARIABLE_DEF" (has ("VARIABLE_DEF" "const"))) 45 tree))))
-      (assert (equal "VAR_INITIALIZER"
-		     (flyparse-tree-type (flyparse-query-first '(("VARIABLE_DEF" (has ("VARIABLE_DEF" "const"))) 
-								 "VAR_DECLARATION" "VAR_INITIALIZER") 
-							       (flyparse-directed-search 
-								'("VARIABLE_DEF" (has ("VARIABLE_DEF" "const"))) 45 tree))))))
-       
-    ;; Check ending position of last var-def
-    (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dudette{public var monkey:Number = 20;}}")))
-      (assert (= 58 (as3-point-after-last-var-def (make-as3-class :tree tree)))))
-       
-    ;; Check ending position of last constant
-    (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dudette{public static const monkey:Number = 20;}}")))
-      (assert (= 67 (as3-point-after-last-const-def (make-as3-class :tree tree)))))
-       
-    ;; test non-qualified function positioning...
-    (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function Dude(){horse();}}}")))
-      (assert (equal "horse"
-		     (flyparse-tree-type (flyparse-directed-search '("horse") 52 tree)))))
-       
-    ;; query for super
-    (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function Dude(){super();}}}")))
-      (assert (equal "super" (flyparse-tree-type (flyparse-directed-search '("super") 52 tree)))))
-       
-    ;; search for constant variable reference
-    (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function Dude(){return MOOSE;}}}")))
-      (assert (equal "MOOSE" (flyparse-tree-as-text (flyparse-directed-search '("NAME") 58 tree)))))
+  ;; Simple queries on friend class
+  (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{}} class Dudette{private var monkey:Number;}")))
+    (assert (equal "CLASS_DEF"
+		   (flyparse-tree-type (flyparse-directed-search '("CLASS_DEF") 45 tree))))
+    (assert (equal "VARIABLE_DEF"
+		   (flyparse-tree-type (flyparse-directed-search '("VARIABLE_DEF") 45 tree)))))
        
        
-    ;; literals passed to 'new' expression
-    (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function Dude(){var aemon = new Crap({name: \"lkj\"});}}}")))
-      (assert (equal "CONSTANT" (flyparse-tree-type (flyparse-directed-search '("CONSTANT") 78 tree)))))
+  ;; Query for constant variable def in a friend class and it's value
+  (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{}} class Dudette{public static const monkey:Number = 20;}")))
+    (assert (equal "VARIABLE_DEF"
+		   (flyparse-tree-type (flyparse-directed-search '("VARIABLE_DEF" (has ("VARIABLE_DEF" "const"))) 45 tree))))
+    (assert (equal "VAR_INITIALIZER"
+		   (flyparse-tree-type (flyparse-query-first '(("VARIABLE_DEF" (has ("VARIABLE_DEF" "const"))) 
+							       "VAR_DECLARATION" "VAR_INITIALIZER") 
+							     (flyparse-directed-search 
+							      '("VARIABLE_DEF" (has ("VARIABLE_DEF" "const"))) 45 tree))))))
+       
+  ;; Check ending position of last var-def
+  (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dudette{public var monkey:Number = 20;}}")))
+    (assert (= 58 (as3-point-after-last-var-def (make-as3-class :tree tree)))))
+       
+  ;; Check ending position of last constant
+  (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dudette{public static const monkey:Number = 20;}}")))
+    (assert (= 67 (as3-point-after-last-const-def (make-as3-class :tree tree)))))
+       
+  ;; test non-qualified function positioning...
+  (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function Dude(){horse();}}}")))
+    (assert (equal "horse"
+		   (flyparse-tree-type (flyparse-directed-search '("horse") 52 tree)))))
+       
+  ;; query for super
+  (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function Dude(){super();}}}")))
+    (assert (equal "super" (flyparse-tree-type (flyparse-directed-search '("super") 52 tree)))))
+       
+  ;; search for constant variable reference
+  (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function Dude(){return MOOSE;}}}")))
+    (assert (equal "MOOSE" (flyparse-tree-as-text (flyparse-directed-search '("NAME") 58 tree)))))
        
        
-    ;; new expression with Non-class expression
-    (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function Dude(){var aemon = new crap({name: \"lkj\"});}}}")))
-      (assert (equal "CONSTANT" (flyparse-tree-type (flyparse-directed-search '("CONSTANT") 78 tree)))))
+  ;; literals passed to 'new' expression
+  (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function Dude(){var aemon = new Crap({name: \"lkj\"});}}}")))
+    (assert (equal "CONSTANT" (flyparse-tree-type (flyparse-directed-search '("CONSTANT") 78 tree)))))
        
        
-    ;; Simple queries on a method definition
-    (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function dude(dude:Dude, cat:Cat):Butt {touch()}}}")))
-      (assert (= 1 
-		 (length (flyparse-query-all as3-flyparse-path-to-method-def tree))))
-      (assert (equal "NAME" 
-		     (flyparse-tree-type (flyparse-query-first as3-flyparse-path-to-method-name tree))))
-      (assert (equal "PARAM" 
-		     (flyparse-tree-type (flyparse-query-first as3-flyparse-path-to-method-param tree))))
-      (assert (equal "Butt" 
-		     (flyparse-tree-as-text (flyparse-query-first as3-flyparse-path-to-method-return-type tree))))
-      (assert (equal "dude" 
-		     (flyparse-tree-type (flyparse-query-first as3-flyparse-path-to-method-name-text tree))))
-      )
-       
-    ;; query on ..rest style method param
-    (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function dude(...rest:Array){touch()}}}")))
-      (assert (equal "PARAM" 
-		     (flyparse-tree-type (flyparse-query-first as3-flyparse-path-to-method-param tree))))
-      )
-       
-    ;; Simple queries on a method call
-    (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function dude(){touch(1,2)}}}")))
-      (assert (= 1 
-		 (length (flyparse-query-all (append as3-flyparse-path-to-method-def-block '("EXPR_STMNT" "EXPR_LIST" "FUNCTION_CALL")) tree))))
-      (assert (= 2
-		 (length (flyparse-query-all (append as3-flyparse-path-to-method-def-block '("EXPR_STMNT" "EXPR_LIST" "FUNCTION_CALL" "ARGUMENTS" "EXPR_LIST" *)) tree))))
-      )
-       
-    ;; Inline function definitions 
-    (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function runHorse(dude){var dude = function(){}; var dude = function(a){return true;}; helloDude()}}}")))
-      (assert (equal "FUNC_DEF" 
-		     (flyparse-tree-type 
-		      (flyparse-directed-search '("FUNC_DEF") 78 tree))))
-      (assert (equal "FUNC_DEF" 
-		     (flyparse-tree-type 
-		      (flyparse-directed-search '("FUNC_DEF") 109 tree)))))
+  ;; new expression with Non-class expression
+  (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function Dude(){var aemon = new crap({name: \"lkj\"});}}}")))
+    (assert (equal "CONSTANT" (flyparse-tree-type (flyparse-directed-search '("CONSTANT") 78 tree)))))
        
        
-    ;; Inline function definition with missing semicolon. This code fails to parse because of antlr's automatic error correction. After parsing
-    ;; 'true', antlr looks for a semi and can't find one - it then tries to correct the situation by deleting the current tokem,  '}', and using
-    ;; then following semi. 
-    ;;
-    ;; We then end up being short a '}'.
-    ;;
-    (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function runHorse(dude){var dude = function(a){return true}; }}}")))
-      ;; WILL FAIL
-      (assert (not (equal "FUNC_DEF" 
-			  (flyparse-tree-type 
-			   (flyparse-directed-search '("FUNC_DEF") 82 tree))))))
+  ;; Simple queries on a method definition
+  (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function dude(dude:Dude, cat:Cat):Butt {touch()}}}")))
+    (assert (= 1 
+	       (length (flyparse-query-all as3-flyparse-path-to-method-def tree))))
+    (assert (equal "NAME" 
+		   (flyparse-tree-type (flyparse-query-first as3-flyparse-path-to-method-name tree))))
+    (assert (equal "PARAM" 
+		   (flyparse-tree-type (flyparse-query-first as3-flyparse-path-to-method-param tree))))
+    (assert (equal "Butt" 
+		   (flyparse-tree-as-text (flyparse-query-first as3-flyparse-path-to-method-return-type tree))))
+    (assert (equal "dude" 
+		   (flyparse-tree-type (flyparse-query-first as3-flyparse-path-to-method-name-text tree))))
+    )
+       
+  ;; query on ..rest style method param
+  (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function dude(...rest:Array){touch()}}}")))
+    (assert (equal "PARAM" 
+		   (flyparse-tree-type (flyparse-query-first as3-flyparse-path-to-method-param tree))))
+    )
+       
+  ;; Simple queries on a method call
+  (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function dude(){touch(1,2)}}}")))
+    (assert (= 1 
+	       (length (flyparse-query-all (append as3-flyparse-path-to-method-def-block '("EXPR_STMNT" "EXPR_LIST" "FUNCTION_CALL")) tree))))
+    (assert (= 2
+	       (length (flyparse-query-all (append as3-flyparse-path-to-method-def-block '("EXPR_STMNT" "EXPR_LIST" "FUNCTION_CALL" "ARGUMENTS" "EXPR_LIST" *)) tree))))
+    )
+       
+  ;; Inline function definitions 
+  (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function runHorse(dude){var dude = function(){}; var dude = function(a){return true;}; helloDude()}}}")))
+    (assert (equal "FUNC_DEF" 
+		   (flyparse-tree-type 
+		    (flyparse-directed-search '("FUNC_DEF") 78 tree))))
+    (assert (equal "FUNC_DEF" 
+		   (flyparse-tree-type 
+		    (flyparse-directed-search '("FUNC_DEF") 109 tree)))))
        
        
-    ;; First method with name
-    (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function runHorse(dude:Monk, horse:Horse){}}}"))
-	   (class (make-as3-class :tree tree))
-	   (method (as3-method-named class "runHorse")))
-      (assert (equal "runHorse" 
-		     (as3-method-name method))))
-       
-    ;; First param in method with name
-    (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function runHorse(dude:Monk, horse:Horse){}}}"))
-	   (class (make-as3-class :tree tree))
-	   (method (as3-method-named class "runHorse"))
-	   (param (as3-formal-parameter-named method "horse")))
-      (assert (equal "Horse"
-		     (as3-formal-parameter-type param)))
-      (assert (equal "horse"
-		     (as3-formal-parameter-name param)))
-      )
+  ;; Inline function definition with missing semicolon. This code fails to parse because of antlr's automatic error correction. After parsing
+  ;; 'true', antlr looks for a semi and can't find one - it then tries to correct the situation by deleting the current tokem,  '}', and using
+  ;; then following semi. 
+  ;;
+  ;; We then end up being short a '}'.
+  ;;
+  (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function runHorse(dude){var dude = function(a){return true}; }}}")))
+    ;; WILL FAIL
+    (assert (not (equal "FUNC_DEF" 
+			(flyparse-tree-type 
+			 (flyparse-directed-search '("FUNC_DEF") 82 tree))))))
        
        
-    ;; Test as3-class-name
-    (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function runHorse(dude:Monk, horse:Horse){}}}")))
-      (assert (equal "Dude"
-		     (as3-class-name (make-as3-class :tree tree)))))
+  ;; First method with name
+  (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function runHorse(dude:Monk, horse:Horse){}}}"))
+	 (class (make-as3-class :tree tree))
+	 (method (as3-method-named class "runHorse")))
+    (assert (equal "runHorse" 
+		   (as3-method-name method))))
+       
+  ;; First param in method with name
+  (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function runHorse(dude:Monk, horse:Horse){}}}"))
+	 (class (make-as3-class :tree tree))
+	 (method (as3-method-named class "runHorse"))
+	 (param (as3-formal-parameter-named method "horse")))
+    (assert (equal "Horse"
+		   (as3-formal-parameter-type param)))
+    (assert (equal "horse"
+		   (as3-formal-parameter-name param)))
+    )
+       
+       
+  ;; Test as3-class-name
+  (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function runHorse(dude:Monk, horse:Horse){}}}")))
+    (assert (equal "Dude"
+		   (as3-class-name (make-as3-class :tree tree)))))
 
-    ;; Use helpers to get properties of method
-    (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function runHorse(dude:Dude, cat:Cat):Butt{touch()}}}"))
-	   (meth (make-as3-method :tree (flyparse-query-first as3-flyparse-path-to-method-def tree))))
-      (assert (equal "runHorse" (as3-method-name meth)))
-      (assert (equal "Butt" (as3-method-return-type meth)))
-      (assert (equal '("public") (as3-method-modifiers meth)))
-      (assert (equal '("Dude" "Cat") (as3-method-parameter-types meth)))
-      )
+  ;; Use helpers to get properties of method
+  (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function runHorse(dude:Dude, cat:Cat):Butt{touch()}}}"))
+	 (meth (make-as3-method :tree (flyparse-query-first as3-flyparse-path-to-method-def tree))))
+    (assert (equal "runHorse" (as3-method-name meth)))
+    (assert (equal "Butt" (as3-method-return-type meth)))
+    (assert (equal '("public") (as3-method-modifiers meth)))
+    (assert (equal '("Dude" "Cat") (as3-method-parameter-types meth)))
+    )
        
-    ;; User method-return-type helper on void method
-    (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function runHorse(dude:Dude, cat:Cat):void{touch()}}}"))
-	   (meth (make-as3-method :tree (flyparse-query-first as3-flyparse-path-to-method-def tree))))
-      (assert (equal "void" (as3-method-return-type meth)))
-      )
-       
-
-    ;; Test as3-method-named
-    (let* ((class (apply make-class-fixture '("package aemon{class Dude{public function runHorse(dude:Monk, horse:Horse){}}}")))
-	   (meth (as3-method-named class "runHorse")))
-      (assert (as3-method-p meth))
-      (assert (equal "runHorse" (as3-method-name meth))))
-
-
-    ;; Test as3-method-at-point
-    (let* ((class (apply make-class-fixture '("package aemon{class Dude{public function runHorse(dude:Monk, horse:Horse){}}}")))
-	   (meth (as3-method-at-point 54 class)))
-      (assert (as3-method-p meth))
-      (assert (equal "runHorse" (as3-method-name meth))))
-
-
-    ;; Test as3-var-type-at-point
-    (let* ((class (apply make-class-fixture '("package aemon{class Dude{public function runHorse(dude:Monk, horse:Horse){ trace(dude) }}}")))
-	   (type (as3-var-type-at-point "dude" 82 class)))
-      (assert (equal "Monk" type)))
-
-
-    ;; Test as3-var-type-at-point
-    (let* ((class (apply make-class-fixture '("package aemon{class Dude{public function runHorse(dude:Monk, horse:Horse){ var snake:String; trace(snake) }}}")))
-	   (type (as3-var-type-at-point "snake" 98 class)))
-      (assert (equal "String" type)))
-
-
-    ;; Test as3-var-type-at-point
-    (let* ((class (apply make-class-fixture '("package aemon{class Dude{private var friend:Friend; public function runHorse(dude:Monk){ trace(friend) }}}")))
-	   (type (as3-var-type-at-point "friend" 98 class)))
-      (assert (equal "Friend" type)))
-
-
-    ;; Test as3-class-instance-methods
-    (let* ((class (apply make-class-fixture '("package aemon{class DudeFace{public function runHorse(dude:Monk){ trace(friend) }}}")))
-	   (methods (as3-class-instance-methods class)))
-      (assert (equal 1 (length methods))))
-
-    ;; Test as3-class-named
-    (let ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function runHorse(dude:Dude, cat:Cat):void{touch()}}}")))
-      (flyparse-with-temp-cached-trees (("/tmp/Dude.as" tree))
-				       (let ((class (as3-class-named "Dude")))
-					 (assert (equal "Dude" (as3-class-name class))))))
-
-
-    ;; Test as3-super-class-for-class
-    (let ((class-tree (flyparse-tree-for-string cmd "package aemon{class Dude extends Dad{}}"))
-	  (super-class-tree (flyparse-tree-for-string cmd "package aemon{class Dad{public function runHorse(dude:Dude, cat:Cat):void{touch()}}}")))
-      (flyparse-with-temp-cached-trees (("/tmp/Dude.as" class-tree) ("/tmp/Dad.as" super-class-tree))
-				       (let* ((class (as3-class-named "Dude"))
-					     (super (as3-super-class-for-class class)))
-					 (assert (equal "Dad" (as3-class-name super))))))
-
-
-    ;; Test as3-interface-named
-    (let ((tree (flyparse-tree-for-string cmd "package aemon{interface IDude{function runHorse(dude:Dude, cat:Cat):void;}}")))
-      (flyparse-with-temp-cached-trees (("/tmp/IDude.as" tree))
-				       (let ((interface (as3-interface-named "IDude")))
-					 (assert (equal "IDude" (as3-interface-name interface))))))
-
-
-    ;; Test as3-interface-instance-methods
-    (let* ((tree (flyparse-tree-for-string cmd "package aemon{interface IDude{function runHorse(dude:Dude, cat:Cat):void;}}"))
-	   (interface (make-as3-interface :tree tree))
-	   (methods (as3-interface-instance-methods interface)))
-      (assert (equal 1 (length methods)))
-      (assert (equal "runHorse" (as3-method-name (first methods)))))
-
-
-    ;; Test as3-class-implemented-interface-names
-    (let* ((class (apply make-class-fixture '("package aemon{class DudeFace implements Horse, Coward{public function runHorse(dude:Monk){ trace(friend) }}}")))
-	   (names (as3-class-implemented-interface-names class)))
-      (assert (equal '("Horse" "Coward") names)))
+  ;; User method-return-type helper on void method
+  (let* ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function runHorse(dude:Dude, cat:Cat):void{touch()}}}"))
+	 (meth (make-as3-method :tree (flyparse-query-first as3-flyparse-path-to-method-def tree))))
+    (assert (equal "void" (as3-method-return-type meth)))
+    )
        
 
-    ;; Test as3-method-accessor-role
-    (let* ((class (apply make-class-fixture '("package aemon{class Dude{public function get runHorse(dude:Monk, horse:Horse){ return 1;}}}")))
-	   (meth (as3-method-named class "runHorse")))
-      (assert (as3-method-p meth))
-      (assert (equal "get" (as3-method-accessor-role meth))))
+  ;; Test as3-method-named
+  (let* ((class (apply make-class-fixture '("package aemon{class Dude{public function runHorse(dude:Monk, horse:Horse){}}}")))
+	 (meth (as3-method-named class "runHorse")))
+    (assert (as3-method-p meth))
+    (assert (equal "runHorse" (as3-method-name meth))))
+
+
+  ;; Test as3-method-at-point
+  (let* ((class (apply make-class-fixture '("package aemon{class Dude{public function runHorse(dude:Monk, horse:Horse){}}}")))
+	 (meth (as3-method-at-point 54 class)))
+    (assert (as3-method-p meth))
+    (assert (equal "runHorse" (as3-method-name meth))))
+
+
+  ;; Test as3-var-type-at-point
+  (let* ((class (apply make-class-fixture '("package aemon{class Dude{public function runHorse(dude:Monk, horse:Horse){ trace(dude) }}}")))
+	 (type (as3-var-type-at-point "dude" 82 class)))
+    (assert (equal "Monk" type)))
+
+
+  ;; Test as3-var-type-at-point
+  (let* ((class (apply make-class-fixture '("package aemon{class Dude{public function runHorse(dude:Monk, horse:Horse){ var snake:String; trace(snake) }}}")))
+	 (type (as3-var-type-at-point "snake" 98 class)))
+    (assert (equal "String" type)))
+
+
+  ;; Test as3-var-type-at-point
+  (let* ((class (apply make-class-fixture '("package aemon{class Dude{private var friend:Friend; public function runHorse(dude:Monk){ trace(friend) }}}")))
+	 (type (as3-var-type-at-point "friend" 98 class)))
+    (assert (equal "Friend" type)))
+
+
+  ;; Test as3-class-instance-methods
+  (let* ((class (apply make-class-fixture '("package aemon{class DudeFace{public function runHorse(dude:Monk){ trace(friend) }}}")))
+	 (methods (as3-class-instance-methods class)))
+    (assert (equal 1 (length methods))))
+
+  ;; Test as3-class-named
+  (let ((tree (flyparse-tree-for-string cmd "package aemon{class Dude{public function runHorse(dude:Dude, cat:Cat):void{touch()}}}")))
+    (flyparse-with-temp-cached-trees (("/tmp/Dude.as" tree))
+				     (let ((class (as3-class-named "Dude")))
+				       (assert (equal "Dude" (as3-class-name class))))))
+
+
+  ;; Test as3-super-class-for-class
+  (let ((class-tree (flyparse-tree-for-string cmd "package aemon{class Dude extends Dad{}}"))
+	(super-class-tree (flyparse-tree-for-string cmd "package aemon{class Dad{public function runHorse(dude:Dude, cat:Cat):void{touch()}}}")))
+    (flyparse-with-temp-cached-trees (("/tmp/Dude.as" class-tree) ("/tmp/Dad.as" super-class-tree))
+				     (let* ((class (as3-class-named "Dude"))
+					    (super (as3-super-class-for-class class)))
+				       (assert (equal "Dad" (as3-class-name super))))))
+
+
+  ;; Test as3-interface-named
+  (let ((tree (flyparse-tree-for-string cmd "package aemon{interface IDude{function runHorse(dude:Dude, cat:Cat):void;}}")))
+    (flyparse-with-temp-cached-trees (("/tmp/IDude.as" tree))
+				     (let ((interface (as3-interface-named "IDude")))
+				       (assert (equal "IDude" (as3-interface-name interface))))))
+
+
+  ;; Test as3-interface-instance-methods
+  (let* ((tree (flyparse-tree-for-string cmd "package aemon{interface IDude{function runHorse(dude:Dude, cat:Cat):void;}}"))
+	 (interface (make-as3-interface :tree tree))
+	 (methods (as3-interface-instance-methods interface)))
+    (assert (equal 1 (length methods)))
+    (assert (equal "runHorse" (as3-method-name (first methods)))))
+
+
+  ;; Test as3-class-implemented-interface-names
+  (let* ((class (apply make-class-fixture '("package aemon{class DudeFace implements Horse, Coward{public function runHorse(dude:Monk){ trace(friend) }}}")))
+	 (names (as3-class-implemented-interface-names class)))
+    (assert (equal '("Horse" "Coward") names)))
        
-    (message "All tests passed :)")
-    ))
+
+  ;; Test as3-method-accessor-role
+  (let* ((class (apply make-class-fixture '("package aemon{class Dude{public function get runHorse(dude:Monk, horse:Horse){ return 1;}}}")))
+	 (meth (as3-method-named class "runHorse")))
+    (assert (as3-method-p meth))
+    (assert (equal "get" (as3-method-accessor-role meth))))
+       
+  (message "All tests passed :)")
+  ))
 
 
 (provide 'as3-mode)
