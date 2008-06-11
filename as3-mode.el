@@ -1342,29 +1342,29 @@
 
 	  (if methods
 	      (progn
-		(insert (format "Methods named '%s':\n----------------------------\n" name))
+		(insert (format "\nMethods named '%s':\n----------------------------\n" name))
 		(mapc describe-func methods)))
 
 	  (if member-vars
 	      (progn
-		(insert (format "Member Variables named '%s':\n----------------------------\n" name))
+		(insert (format "\nMember Variables named '%s':\n----------------------------\n" name))
 		(mapc describe-func member-vars)))
 
 	  (if local-vars
 	      (progn
-		(insert (format "Local Variables named '%s':\n----------------------------\n" name))
+		(insert (format "\nLocal Variables named '%s':\n----------------------------\n" name))
 		(mapc describe-func local-vars)))
 
 	  (if params
 	      (progn
-		(insert (format "Parameters named '%s':\n----------------------------\n" name))
+		(insert (format "\nParameters named '%s':\n----------------------------\n" name))
 		(mapc describe-func params)))
 
 	  (setq buffer-read-only t)
 	  (use-local-map (make-sparse-keymap))
 	  (define-key (current-local-map) (kbd "q") 'kill-buffer-and-window)
 	  (goto-char (point-min))
-	  (forward-line 2)
+	  (forward-line 3)
 	  ))))
 
 
