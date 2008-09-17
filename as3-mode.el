@@ -36,7 +36,12 @@
 
 
 (defvar as3-flyparse-parse-cmd 
-  '("java" "emacs.flyparse.as3.AS3Driver" "-f")
+  `("java" 
+    "-cp"
+    ,(concat "/home/aemon/etc/emacs/site-lisp/flyparse/lib/flyparse-parsers.jar:"
+	     "/home/aemon/etc/emacs/site-lisp/flyparse/lib/antlr-runtime-3.1.jar")
+    "emacs.flyparse.as3.AS3Driver" "-f"
+    )
   "The shell command used to invoke the actionscript 3 parser.")
 
 (defvar as3-flymake-build-command nil
