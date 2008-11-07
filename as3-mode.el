@@ -252,10 +252,17 @@
   "Library of commands, accessible via as3-quick-menu."
   )
 
+(defun as3-run-command-by-bookmark (command-library)
+  "Execute command associated with bookmark."
+  (let* ((key (ido-completing-read "Enter command bookmark: " 
+				   command-library 
+				   nil t nil))
+	 (func (intern (cdr (assoc key command-library)))))
+    (call-interactively func)))
 
 (defun as3-quick-menu ()
   (interactive)
-  (run-command-by-bookmark as3-command-library))
+  (as3-run-command-by-bookmark as3-command-library))
 
 
 (define-derived-mode as3-mode fundamental-mode "as3-mode"
