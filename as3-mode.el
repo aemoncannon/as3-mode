@@ -42,6 +42,10 @@
   "The shell command used by flymake-mode to launch external syntax checker.")
 (make-variable-buffer-local 'as3-flymake-build-command)
 
+
+(defvar as3-flex-livedoc-url "http://livedocs.adobe.com/flash/9.0/ActionScriptLangRefV3/%s.html"
+  "The url used to browse to class documentation. See as3-open-livedoc-for-class")
+
 ;;
 ;; Some predefined flyparse queries, for conveniance.
 ;;
@@ -248,6 +252,7 @@
     ("jump-to-class" . "as3-jump-to-class-by-name")
     ("override-method" . "as3-override-method-by-name")
     ("implement-interface-method" . "as3-implement-interface-method")
+    ("help" . "as3-open-livedoc-for-class")
     )
   "Library of commands, accessible via as3-quick-menu."
   )
@@ -1576,6 +1581,13 @@
       (message "Not in a class."))))
 
 
+(defun as3-open-livedoc-for-class ()
+  (interactive)
+  (let* ((class-name (read-string "Enter full path to class: " (word-at-point)))
+	 (livedoc-url as3-flex-livedoc-url)
+	 (file-path (replace-regexp-in-string "\\." "/" class-name))
+	 (url (format livedoc-url file-path)))
+    (browse-url url)))
 
 
 (yas/define 'as3-mode "fu" "function(${arg}){
