@@ -43,7 +43,7 @@
   "The shell command maker for parsing a single as3 file.")
 (make-variable-buffer-local 'as3-flyparse-single-file-cmd-maker)
 
-(defvar as3-flyparse-recursive-cmd-maker 'as3-flyparse-recursive-cmd-maker
+(defvar as3-flyparse-recursive-cmd-maker 'as3-flyparse-make-recursive-cmd
   "The shell command maker for parsing a directory recursively.")
 (make-variable-buffer-local 'as3-flyparse-recursive-cmd-maker)
 
@@ -276,9 +276,9 @@
   "Create command for parsing a single file using flyparse."
   (list "java" "emacs.flyparse.as3.AS3Driver" "-f" file-name result-file-name))
 
-(defun as3-flyparse-make-recursive-cmd (file-name result-file-name)
+(defun as3-flyparse-make-recursive-cmd (directory-names result-file-name)
   "Create a command for parsing a directory recursively."
-  (list "java" "emacs.flyparse.as3.AS3Driver" "-l" file-name result-file-name))
+  `("java" "emacs.flyparse.as3.AS3Driver" "-l" ,result-file-name ,@directory-names))
 
 
 (defun as3-run-command-by-bookmark (command-library)
@@ -1672,12 +1672,7 @@
 (defun as3-project-reparse-all ()
   "For each path listed in as3-project-source-paths, parse all .as into the flyparse cache."
   (interactive)
-  (mapc
-   (lambda (path)
-     (flyparse-cache-all
-      (expand-file-name path) 
-      "\\.as"))
-   as3-project-source-paths))
+  (flyparse-cache-all as3-project-source-paths))
 
 
 (defun as3-project-flashlog ()
