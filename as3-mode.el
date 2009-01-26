@@ -252,6 +252,7 @@
     ("jump-to-class" . "as3-jump-to-class-by-name")
     ("override-method" . "as3-override-method-by-name")
     ("implement-interface-method" . "as3-implement-interface-method")
+    ("organize-interface-implementation" . "as3-organize-interface-implementation")
     ("help" . "as3-open-livedoc-for-class")
     )
   "Library of commands, accessible via as3-quick-menu."
@@ -1084,6 +1085,52 @@
 	    (message "Sorry could not locate %s." interface-name)
 	    ))
       (message "Sorry, this class does not implement any interfaces."))))
+
+
+(defun as3-organize-interface-implementation ()
+  "Find an implemented interface by name, then find each of it's members, 
+   as implemented in the currrent class"
+  (interactive)
+  (let* ((start-point (point))
+	 (class (as3-current-class))
+	 (choices (mapcar (lambda (name)
+			    `(,name . ,name)
+			    ) (as3-class-implemented-interface-names class))))
+    (if (not (null choices))
+	(let* ((key (ido-completing-read 
+		     "Select an implemented interface: "
+		     choices 
+		     nil t nil))
+	       (interface-name (cdr (assoc key choices)))
+	       (interface (as3-interface-named interface-name)))
+
+	  (if interface
+	      (let* ((methods (as3-interface-instance-methods interface))
+		     (method-impls (mapcar (lambda (m)
+					     (as3-method-named class (as3-method-name m)))
+					   methods))
+		     (method-impl-trees (mapcar (lambda (m)
+					     (as3-node-tree m)) method-impls))
+		     (method-impl-strings
+		      (mapcar (lambda (n)
+				(flyparse-tree-buffer-substring n))
+			      method-impl-trees)))
+
+		(flyparse-kill-trees method-impl-trees)
+		(insert (format "/******** Implement %s *******/" (as3-interface-name interface)))
+		(newline)(newline)
+		(mapc
+		 (lambda (str)
+		   (insert str)
+		   (newline)
+		   (newline)
+		   ) method-impl-strings)
+		(indent-region start-point (point))
+
+		)
+	    (message "Sorry could not locate %s." interface-name)
+	    ))
+      (message "Sorry, this class does not implement any interfaces."))))
   
 	       
 
@@ -1104,7 +1151,7 @@
 			   ) method-name content-string))
 	  (goto-char (flyparse-tree-beg-offset (first subtrees)))
 	  (flyparse-kill-region subtrees)
-	  (insert (format "%s();" method-name)) ;
+	  (insert (format "%s();" method-name))	;
 	  (indent-region (point-min) (point-max)))
       (message "Must select at least one statement within a method."))))
 
@@ -1659,7 +1706,7 @@
   "Open a buffer visiting the local system's flash log, as defined by as3-project-flashlog-path."
   (interactive)
   (find-file as3-project-flashlog-path)
-  (auto-revert-mode))
+  (revert-buffer nil t))
   
 ;; Regression tests
 
