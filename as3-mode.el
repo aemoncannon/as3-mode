@@ -34,7 +34,6 @@
 (require 'ido)
 
 
-
 (defvar as3-flyparse-single-file-to-stdout-cmd-maker 'as3-flyparse-make-single-file-to-stdout-cmd
   "The shell command maker for parsing a single as3 file and printing the resultant tree to stdout.")
 (make-variable-buffer-local 'as3-flyparse-single-file-to-stdout-cmd-maker)
@@ -1135,7 +1134,7 @@
 					     (as3-method-named class (as3-method-name m)))
 					   methods))
 		     (method-impl-trees (mapcar (lambda (m)
-					     (as3-node-tree m)) method-impls))
+						  (as3-node-tree m)) method-impls))
 		     (method-impl-strings
 		      (mapcar (lambda (n)
 				(flyparse-tree-buffer-substring n))
@@ -1712,7 +1711,9 @@
 	(progn
 	  (setq as3-project-helper-project-file-path project-file-path)
 	  (setq as3-project-helper-project-root-dir (file-name-directory project-file-path))
-	  (load project-file-path))
+	  (condition-case nil
+	      (load project-file-path)
+	    (error (message "Crud. Error while loading as3 project file."))))
       (message "Sorry, could not find an as3 project file for this buffer."))))
 
 
@@ -1762,12 +1763,12 @@
        
     ;; Query for different types of for loop
     (let* ((tree (flyparse-tree-for-string cmd-maker (concat "package aemon{class Dude{"
-						       "public function Dude(){"
-						       "   for(var name in hash){trace(name)}"
-						       "   for(var i:Number = 0; i < 20; i++){trace(i);}"
-						       "   for each(var ea:Thing in myThings){trace(ea);}"
-						       "}"
-						       "}}"))))
+							     "public function Dude(){"
+							     "   for(var name in hash){trace(name)}"
+							     "   for(var i:Number = 0; i < 20; i++){trace(i);}"
+							     "   for each(var ea:Thing in myThings){trace(ea);}"
+							     "}"
+							     "}}"))))
       (assert (= 1 (length
 		    (flyparse-query-all (append as3-flyparse-path-to-method-def-block '("FOR_LOOP")) tree))))
       (assert (= 1 (length
