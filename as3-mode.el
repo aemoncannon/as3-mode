@@ -25,9 +25,7 @@
 ;;; Code:
 
 (eval-when-compile (require 'cl))
-
 (require 'fdb)
-(require 'flymake)
 (require 'flyparse-mode)
 (require 'font-lock)
 (require 'yasnippet)
@@ -45,12 +43,6 @@
 (defvar as3-flyparse-recursive-cmd-maker 'as3-flyparse-make-recursive-cmd
   "The shell command maker for parsing a directory recursively.")
 (make-variable-buffer-local 'as3-flyparse-recursive-cmd-maker)
-
-
-(defvar as3-flymake-build-command nil
-  "The shell command used by flymake-mode to launch external syntax checker.")
-(make-variable-buffer-local 'as3-flymake-build-command)
-
 
 (defvar as3-flex-livedoc-url "http://livedocs.adobe.com/flash/9.0/ActionScriptLangRefV3/%s.html"
   "The url used to browse to class documentation. See as3-open-livedoc-for-class")
@@ -126,8 +118,6 @@
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c C-c") 'comment-region)
     (define-key map (kbd "C-c m") 'as3-quick-menu)
-    (define-key map (kbd "C-c p") 'flymake-goto-prev-error)
-    (define-key map (kbd "C-c n") 'flymake-goto-next-error)
     (define-key map (kbd "C-c h") 'as3-show-help-at-point)
     map)
   "Keymap for `as3-mode'.")
@@ -262,6 +252,7 @@
     ("override-method" . "as3-override-method-by-name")
     ("implement-interface-method" . "as3-implement-interface-method")
     ("organize-interface-implementation" . "as3-organize-interface-implementation")
+    ("flashlog" . "as3-project-flashlog")
     ("help" . "as3-open-livedoc-for-class")
     )
   "Library of commands, accessible via as3-quick-menu."
@@ -306,7 +297,6 @@
   (setq flyparse-single-file-cmd-maker as3-flyparse-single-file-cmd-maker)
   (setq flyparse-recursive-cmd-maker as3-flyparse-recursive-cmd-maker)
   (flyparse-mode-on)
-  (flymake-mode-on)
   (yas/initialize)
   (run-hooks 'as3-mode-hook)
   )
@@ -368,36 +358,6 @@
 	    (incf open-count))
 	   )))
       (- open-count close-count))))
-
-
-
-;; flymake-mode helpers
-
-(defun as3-flymake-init ()
-  (if as3-flymake-build-command
-      (progn
-	(remove-hook 'after-save-hook 'flymake-after-save-hook t)
-	(basic-save-buffer)
-	(add-hook 'after-save-hook 'flymake-after-save-hook nil t)
-	as3-flymake-build-command)))
-
-(defun as3-flymake-cleanup () ())
-(defun as3-flymake-get-real-file-name (tmp-file) tmp-file)
-
-(setq flymake-allowed-file-name-masks
-      (cons '(".+\\.as$\\|.+\\.mxml$"
-	      as3-flymake-init
-	      as3-flymake-cleanup
-	      as3-flymake-get-real-file-name)
-	    flymake-allowed-file-name-masks))
-
-(setq flymake-err-line-patterns
-      (cons '("^\\(.*\\)(\\([0-9]+\\)): col: \\([0-9]+\\) Error: \\(.*\\)$" 1 2 3 4)
-	    flymake-err-line-patterns))
-
-;; Find error messages in flex compiler output:
-(push '("^\\(.*\\)(\\([0-9]+\\)): col: \\([0-9]+\\) Error: \\(.*\\)$" 1 2 3 2) compilation-error-regexp-alist)
-
 
 
 
