@@ -252,6 +252,7 @@
     ("override-method" . "as3-override-method-by-name")
     ("implement-interface-method" . "as3-implement-interface-method")
     ("organize-interface-implementation" . "as3-organize-interface-implementation")
+    ("define-string-constant" . "as3-retroactively-define-string-constant")
     ("flashlog" . "as3-project-flashlog")
     ("help" . "as3-open-livedoc-for-class")
     )
@@ -1116,6 +1117,48 @@
 	    ))
       (message "Sorry, this class does not implement any interfaces."))))
   
+
+(defun as3-retroactively-define-string-constant (pos)
+  "For the constant property access at point, MyClass.DUDE for example, switch to MyClass and create a 
+   definition for the DUDE constant. We assume that DUDE is a string. Yes this is dumb."
+  (interactive (list (point)))
+  (let ((prop-access (flyparse-containing-tree-of-type "PROP_ACCESS" pos)))
+    (if (null prop-access)
+	(message "Not positioned in a property access.")
+      (let* ((class-name-tree (flyparse-query-first '("PROP_ACCESS" "NAME") prop-access))
+	     (const-name-tree (flyparse-query-first '("PROP_ACCESS" "PROP_OR_IDENT" "NAME") prop-access))
+	     (class-name (flyparse-tree-as-text class-name-tree))
+	     (const-name (flyparse-tree-as-text const-name-tree))
+	     (class (as3-class-named class-name))
+	     (class-tree (as3-class-tree class))
+	     (file-path (as3-class-file-path class)))
+
+	(find-file-other-window file-path)
+
+	;; Find the best place to insert to const.
+	(let* ((last-const 
+		(flyparse-query-last
+		 (append as3-flyparse-path-to-variable-def '("const")) class-tree))
+	       (last-var 
+		(flyparse-query-last as3-flyparse-path-to-variable-def class-tree))
+	       (type-block 
+		(flyparse-query-first as3-flyparse-path-to-class-block class-tree))
+	       (insertion-point 
+		(cond (last-const (flyparse-tree-end-offset last-const))
+		      (last-var (flyparse-tree-end-offset last-var))
+		      (type-block (flyparse-tree-beg-offset type-block))
+		      (t (throw 'FAILURE "Nowhere to insert constant :("))
+		      )))
+	  
+	  ;; Now insert the line
+	  (goto-char insertion-point)
+	  (end-of-line)
+	  (newline)
+	  (insert (format "public static const %s:%s = \"%s\";" const-name "String" (downcase const-name)))
+	  (beginning-of-line)
+	  (indent-according-to-mode)
+	  )))))
+  
 	       
 
 (defun as3-hoist-as-method (beg end)
@@ -1135,7 +1178,7 @@
 			   ) method-name content-string))
 	  (goto-char (flyparse-tree-beg-offset (first subtrees)))
 	  (flyparse-kill-region subtrees)
-	  (insert (format "%s();" method-name))	;
+	  (insert (format "%s();" method-name)) ;
 	  (indent-region (point-min) (point-max)))
       (message "Must select at least one statement within a method."))))
 
